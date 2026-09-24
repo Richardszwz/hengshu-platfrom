@@ -12,19 +12,28 @@ OpenAI 兼容 API 网关、会话保持、多租户隔离。
 | 节点类型 | 架构 | 典型机型 | GPU 指标来源 |
 |---|---|---|---|
 | x86 服务器 | amd64 | L4 / RTX 6000 / L40S / H100 PCIe | pynvml |
-| 边缘盒 | arm64 | Jetson AGX Orin / Orin Nano | jtop(tegrastats)，P1 实装；接口已留 |
+| 边缘盒 | arm64 | Jetson AGX Orin / Orin Nano | tegrastats（P1 已实装：解析器+后台采样） |
 
 - 全部镜像双架构：`docker buildx build --platform linux/amd64,linux/arm64`（CI 已验证）
-- Agent 的 GPU 采集层运行期按 `platform.machine()` 自动降级，采集失败不拖垮心跳
+- Agent GPU 采集三级自动探测：pynvml（x86 及带驱动 aarch64 如 DGX Spark）→ tegrastats（Jetson）→ 全 0 降级（心跳优先，采集失败不拖垮心跳）
 - 控制台/管理节点若也是 ARM 机器（如 DGX Spark），同一镜像直接跑
+
+## P1 节点纳管（SSH 推送安装）
+
+控制台「节点管理」页完成全流程：填写节点 ID/主机/SSH 凭证（私钥或密码，AES-GCM 加密落库）→
+推送安装 → asyncssh 连接（主机指纹 TOFU，变更即中止）→ 探测 arch/docker/nvidia →
+目标机 `docker run` 拉起 Agent 容器（挂 docker.sock 获得服务管控能力）→ 心跳自动上线。
+
+目标机前置：Docker + NVIDIA 容器运行时 + SSH 可达；Agent 需能回连 `REDIS_ADVERTISE`（默认取控制台 redis_url）。
+气隙变体：`INSTALL_TAR_DIR` 下放 `agent-{arch}.tar` 时自动 scp + docker load。
 
 ## 仓库结构
 
 ```
 hengshu/
-├── console/                # Web 控制台（Vue3 + ElementPlus 前端 / FastAPI 后端）
-│   ├── backend/            #   控制台 API：认证、节点、服务、租户、规则、仪表盘
-│   └── frontend/           #   前端 SPA（HUD 深色风，ECharts）
+├── console/                # Web 控制台（Vue3 前端 001 HUD 设计系统 / FastAPI 后端）
+│   ├── backend/            #   控制台 API：认证、节点(SSH 推送安装)、服务、租户、规则、仪表盘
+│   └── frontend/           #   前端 SPA（HUD 深色风，ECharts，无 UI 框架依赖）
 ├── router/                 # 数据面 LB：OpenAI 兼容透传、负载评分调度、会话粘性
 │   └── app/
 │       ├── balancer.py     #   评分：0.35·GPU + 0.25·VRAM + 0.25·队列 + 0.15·TTFT，粘性 ÷0.7
@@ -86,11 +95,12 @@ for i in 1 2; do curl -sN -X POST localhost:9000/v1/chat/completions \
 python -m venv .venv
 .venv/Scripts/pip install -r router/requirements.txt -r console/backend/requirements.txt pytest
 cd router && python -m pytest app/tests -q          # 调度器/粘性单测（7 例）
-cd ../console/backend && python -m pytest tests -q  # 控制台冒烟（2 例）
+cd ../console/backend && python -m pytest tests -q  # 控制台冒烟+安装器 TOFU（5 例）
+cd ../../agent && python -m pytest tests -q         # tegrastats 解析/GPU 降级链/docker argv（13 例）
 ```
 
 ## 路线图
 
-P0 脚手架（本仓库）→ P1 纳管+MVP → P2 智能调度+服务管控+多租户 →
-P3 高可用+二次开发 → P4 多机并行单模型 → P5 离线交付。
+P0 脚手架 ✅ → P1 纳管链路（SSH 推送安装+采集补实+节点管理页，待真机接入验收）→
+P2 智能调度+服务管控 UI+多租户 → P3 高可用+二次开发 → P4 多机并行单模型 → P5 离线交付。
 详见 `docs/PROPOSAL.md`（v1.6 定稿）。

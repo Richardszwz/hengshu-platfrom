@@ -5,6 +5,10 @@ export const api = {
   series: (points = 60) =>
     axios.get('/api/dashboard/series', { params: { points } }).then(r => r.data),
   nodes: () => axios.get('/api/nodes').then(r => r.data),
+  addNode: (payload: object) => axios.post('/api/nodes', payload).then(r => r.data),
+  installNode: (nodeId: string, payload: object) =>
+    axios.post(`/api/nodes/${nodeId}/install`, payload).then(r => r.data),
+  removeNode: (nodeId: string) => axios.delete(`/api/nodes/${nodeId}`).then(r => r.data),
   services: () => axios.get('/api/services').then(r => r.data),
   stopService: (node: string, name: string) =>
     axios.post(`/api/services/${node}/${name}/stop`).then(r => r.data),

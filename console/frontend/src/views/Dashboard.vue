@@ -1,47 +1,16 @@
 <template>
-  <div class="app">
-    <!-- 侧边导航 -->
-    <aside class="side">
-      <div class="logo">
-        <div class="logo-mark"></div>
-        <div><b>衡枢<span style="color:var(--cyan);font-size:12px;letter-spacing:1px"> HENGSHU</span></b><small>GPU CLUSTER LB</small></div>
-      </div>
-      <nav class="nav">
-        <a class="on"><span class="ico"></span>概览驾驶舱</a>
-        <a><span class="ico"></span>节点管理<span class="badge" v-if="summary">{{ summary.nodes_online }}/{{ summary.nodes_total }}</span></a>
-        <a><span class="ico"></span>模型服务<span class="badge" v-if="summary">{{ summary.services_running }}/{{ summary.services_total }}</span></a>
-        <a><span class="ico"></span>租户管理</a>
-        <a><span class="ico"></span>规则路由</a>
-        <a><span class="ico"></span>审计日志</a>
-        <a><span class="ico"></span>系统设置</a>
-      </nav>
-      <div class="side-foot">
-        <div class="avatar">R</div>
-        <div><b>admin</b><small>平台管理员 · v0.1.0</small></div>
-        <button class="logout-btn" @click="logout">退出</button>
-      </div>
-    </aside>
-
-    <!-- 主区 -->
-    <div class="main">
-      <div class="topbar">
-        <div class="sys-state" :class="{ warn: !clusterOk }">
-          <span class="blink"></span>{{ clusterOk ? 'SYSTEM ONLINE' : 'NODE DEGRADED' }}
-        </div>
-        <div class="crumb">概览 / <b>集群驾驶舱</b></div>
-        <div class="top-right">
-          <button class="live-btn" @click="toggleLive">{{ live ? '⏸ 暂停实时流' : '▶ 恢复实时流' }}</button>
-          <div class="bell" @click.stop="showAlerts = !showAlerts"><i v-if="alerts.length"></i></div>
-          <div class="clock">{{ clock }}</div>
-        </div>
-        <div class="alerts" v-if="showAlerts" @click.stop>
+  <AppLayout crumb-prefix="概览" crumb-title="集群驾驶舱" :degraded="!clusterOk">
+    <template #top-right>
+      <button class="live-btn" @click="toggleLive">{{ live ? '⏸ 暂停实时流' : '▶ 恢复实时流' }}</button>
+      <div class="bell" @click.stop="showAlerts = !showAlerts"><i v-if="alerts.length"></i></div>
+      <div class="alerts" v-if="showAlerts" @click.stop>
           <h4>⚠ 活跃告警 ({{ alerts.length }})</h4>
           <div v-for="(a, i) in alerts" :key="i" class="alert-item" :class="{ err: a.level === 'ERROR' }">
             {{ a.text }}<small>{{ a.time }}</small>
           </div>
           <div v-if="!alerts.length" style="color:var(--txt-dim);font-size:12px;padding:8px">无未确认告警</div>
         </div>
-      </div>
+    </template>
 
       <!-- KPI 行 -->
       <div class="kpis" v-if="summary">
@@ -151,7 +120,6 @@
           </tbody>
         </table>
       </div>
-    </div>
 
     <!-- 节点详情抽屉 -->
     <div class="mask" :class="{ on: drawerOpen }" @click="closeDrawer"></div>
@@ -189,15 +157,14 @@
         </div>
       </div>
     </div>
-  </div>
+  </AppLayout>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef } from 'vue'
 import * as echarts from 'echarts'
-import { useRouter } from 'vue-router'
 import { api } from '../api/client'
-import { useAuthStore } from '../stores/auth'
+import AppLayout from '../components/AppLayout.vue'
 
 /* ---------- 状态 ---------- */
 const summary = ref<any>(null)
@@ -207,7 +174,6 @@ const qpsSeries = ref<number[]>([])
 const ttftSeries = ref<number[]>([])
 const live = ref(true)
 const showAlerts = ref(false)
-const clock = ref('--:--:--')
 const drawerOpen = ref(false)
 const drawerNode = ref<any>(null)
 const drawerLogs = ref<any[]>([])
@@ -220,10 +186,7 @@ const elSess = shallowRef<HTMLElement>()
 const elNodeDetail = shallowRef<HTMLElement>()
 
 const charts = new Map<string, echarts.ECharts>()
-const router = useRouter()
-const auth = useAuthStore()
 let timer = 0
-let clockTimer = 0
 
 /* ---------- 计算属性 ---------- */
 const events = computed(() => (summary.value?.events || []).slice(-16))
@@ -474,27 +437,167 @@ function toggleLive() {
   if (live.value) refresh()
 }
 
-function logout() {
-  auth.logout()
-  router.push('/login')
-}
-
 /* ---------- 生命周期 ---------- */
-function tickClock() {
-  clock.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
-}
-
 onMounted(() => {
-  tickClock()
-  clockTimer = window.setInterval(tickClock, 1000)
   refresh()
   timer = window.setInterval(refresh, 3000)
   window.addEventListener('resize', () => charts.forEach(c => c.resize()))
 })
 onUnmounted(() => {
   clearInterval(timer)
-  clearInterval(clockTimer)
   charts.forEach(c => c.dispose())
   charts.clear()
 })
 </script>
+
+<style scoped>
+/* 布局框架样式在 AppLayout.vue；此处为驾驶舱专属（001 原型还原） */
+
+/* ---------- 顶栏右侧控件 ---------- */
+.live-btn {
+  background: linear-gradient(90deg, rgba(0,229,255,.15), rgba(0,229,255,.05));
+  border: 1px solid var(--cyan-dim); color: var(--cyan); font-size: 11px;
+  padding: 5px 12px; cursor: pointer; letter-spacing: 1px;
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
+}
+.live-btn:hover { background: rgba(0,229,255,.25); }
+.bell { position: relative; width: 16px; height: 16px; border: 1.5px solid var(--txt-dim); border-radius: 8px 8px 3px 3px; cursor: pointer; }
+.bell i { position: absolute; top: -4px; right: -4px; width: 7px; height: 7px; border-radius: 50%; background: var(--red); box-shadow: 0 0 6px var(--red); }
+.alerts {
+  position: absolute; top: 38px; right: 0; width: 300px; background: var(--panel-solid);
+  border: 1px solid var(--line); z-index: 60; padding: 10px;
+  box-shadow: 0 8px 30px rgba(0,0,0,.5);
+}
+.alerts h4 { color: var(--amber); font-size: 12px; margin-bottom: 8px; }
+.alert-item { font-size: 12px; padding: 6px 8px; border-left: 2px solid var(--amber); background: rgba(255,181,69,.06); margin-bottom: 6px; }
+.alert-item small { display: block; color: var(--txt-faint); font-size: 10px; margin-top: 2px; }
+.alert-item.err { border-left-color: var(--red); background: rgba(255,77,106,.06); }
+
+/* ---------- KPI 卡片 ---------- */
+.kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.kpi { padding: 12px 16px; position: relative; overflow: hidden; }
+.kpi .num { font-family: var(--font-num); font-size: 34px; font-weight: 700; color: var(--txt); line-height: 1; }
+.kpi .num small { font-size: 12px; color: var(--txt-dim); font-weight: 400; margin-left: 4px; }
+.kpi .lab { color: var(--txt-dim); font-size: 11px; margin-top: 6px; letter-spacing: 1px; }
+.delta { position: absolute; right: 12px; top: 12px; font-size: 11px; font-family: var(--mono); }
+.delta.up { color: var(--green); }
+.delta.down { color: var(--red); }
+
+/* ---------- 面板与角框 ---------- */
+.panel {
+  background: var(--panel); border: 1px solid var(--line); backdrop-filter: blur(6px);
+  padding: 12px 14px; position: relative;
+}
+.p-title {
+  color: var(--txt); font-size: 13px; letter-spacing: 1px; margin-bottom: 10px;
+  display: flex; align-items: center; gap: 8px;
+}
+.p-title::before { content: ''; width: 3px; height: 12px; background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
+.corner::before, .corner::after {
+  content: ''; position: absolute; width: 14px; height: 14px; pointer-events: none;
+}
+.corner::before { top: -1px; left: -1px; border-top: 2px solid var(--cyan); border-left: 2px solid var(--cyan); }
+.corner::after { bottom: -1px; right: -1px; border-bottom: 2px solid var(--cyan); border-right: 2px solid var(--cyan); }
+
+/* ---------- 图表区 ---------- */
+.grid-a { display: grid; grid-template-columns: 1.6fr 1fr; gap: 12px; }
+.chart-box { height: 180px; }
+.chart-box.tall { height: 220px; }
+.grid-b { display: grid; grid-template-columns: 1fr 1.2fr 1fr; gap: 12px; }
+.donut-wrap { position: relative; height: 190px; }
+.donut-center {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  text-align: center; pointer-events: none;
+}
+.donut-center b { font-family: var(--font-num); font-size: 30px; color: var(--cyan); display: block; }
+.donut-center span { font-size: 11px; color: var(--txt-dim); }
+
+/* ---------- 节点卡片 ---------- */
+.nodes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.node { cursor: pointer; transition: transform .15s, box-shadow .15s; }
+.node:hover { transform: translateY(-2px); box-shadow: 0 6px 24px rgba(0, 200, 255, .12); }
+.nt { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.nt .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.nt .dot.a { background: var(--green); box-shadow: 0 0 8px var(--green); animation: blink 2s infinite; }
+.nt .dot.s { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+.nt .gpu { margin-left: auto; font-size: 10px; color: var(--txt-dim); border: 1px solid var(--line); padding: 1px 6px; }
+.nf { font-size: 11px; color: var(--txt-dim); margin-bottom: 6px; }
+.nm { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; min-height: 20px; }
+.nm .tag { font-size: 10px; padding: 1px 6px; border: 1px solid var(--cyan-dim); color: var(--cyan); }
+.nm .tag.g { border-color: rgba(45,255,168,.4); color: var(--green); }
+.nl { display: flex; gap: 12px; font-size: 11px; color: var(--txt-dim); margin-bottom: 8px; }
+.nl .v { font-family: var(--font-num); font-size: 15px; color: var(--txt); }
+.nl .v.warm { color: var(--amber); }
+.nl .v.hot { color: var(--red); }
+.nbar { display: flex; flex-direction: column; gap: 4px; }
+.bar-row { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--txt-faint); }
+.bar { flex: 1; height: 4px; background: rgba(255,255,255,.06); position: relative; }
+.bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--cyan); box-shadow: 0 0 6px rgba(0,229,255,.6); }
+.bar.hot i { background: var(--red); box-shadow: 0 0 6px rgba(255,77,106,.6); }
+.n-foot { display: flex; justify-content: space-between; font-size: 10px; color: var(--txt-faint); margin-top: 8px; border-top: 1px dashed rgba(0,229,255,.15); padding-top: 6px; }
+.n-foot b { color: var(--txt-dim); font-family: var(--font-num); }
+.node-detail { margin-top: 8px; }
+.grid-c { display: grid; grid-template-columns: 1.2fr 1fr; gap: 12px; }
+
+/* ---------- 集群事件流 ---------- */
+.evts { max-height: 230px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.evt { display: flex; gap: 8px; font-size: 11px; font-family: var(--mono); align-items: baseline; }
+.evt .t { color: var(--txt-faint); flex: none; }
+.evt .l { flex: none; width: 44px; }
+.evt .l.INFO { color: var(--cyan); }
+.evt .l.OK { color: var(--green); }
+.evt .l.WARN { color: var(--amber); }
+.evt .l.ERROR { color: var(--red); }
+.evts .empty { color: var(--txt-faint); font-size: 11px; }
+
+/* ---------- 服务表 ---------- */
+.svc table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.svc th {
+  text-align: left; color: var(--txt-dim); font-weight: 600; font-size: 11px;
+  padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap;
+}
+.svc td { padding: 7px 10px; border-bottom: 1px solid rgba(20,40,60,.4); white-space: nowrap; }
+.svc tr:hover td { background: rgba(0,200,255,.04); }
+.svc-dim { color: var(--txt-faint); font-size: 11px; }
+.st { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; }
+.st i { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+.st.a { color: var(--green); } .st.a i { background: var(--green); box-shadow: 0 0 6px var(--green); animation: blink 2s infinite; }
+.st.s { color: var(--txt-faint); } .st.s i { background: var(--txt-faint); }
+.st.e { color: var(--red); } .st.e i { background: var(--red); }
+.op {
+  background: transparent; border: 1px solid var(--line); color: var(--txt-dim);
+  font-size: 11px; padding: 2px 10px; cursor: pointer; margin-right: 6px;
+}
+.op:hover { color: var(--cyan); border-color: var(--cyan-dim); }
+.op.stop:hover { color: var(--red); border-color: rgba(255,77,90,.4); }
+.empty { text-align: center; color: var(--txt-faint); padding: 20px !important; }
+
+/* ---------- 节点详情抽屉 ---------- */
+.mask {
+  position: fixed; inset: 0; background: rgba(2, 6, 12, .6); z-index: 90;
+  opacity: 0; pointer-events: none; transition: opacity .2s;
+}
+.mask.on { opacity: 1; pointer-events: auto; }
+.drawer {
+  position: fixed; top: 0; right: -420px; width: 400px; height: 100vh; z-index: 100;
+  background: var(--panel-solid); border-left: 1px solid var(--line);
+  transition: right .25s ease; padding: 18px; overflow-y: auto;
+  box-shadow: -10px 0 40px rgba(0,0,0,.5);
+}
+.drawer.open { right: 0; }
+.d-close {
+  position: absolute; top: 12px; right: 12px; background: none; border: 1px solid var(--line);
+  color: var(--txt-dim); width: 26px; height: 26px; cursor: pointer;
+}
+.d-close:hover { color: var(--red); border-color: var(--red); }
+.drawer h3 { font-family: var(--font-num); color: var(--cyan); letter-spacing: 2px; margin-bottom: 2px; }
+.drawer .sub { font-size: 11px; color: var(--txt-dim); margin-bottom: 12px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.drawer .sub .tag { font-size: 10px; border: 1px solid var(--cyan-dim); color: var(--cyan); padding: 1px 6px; }
+.tag.g { border-color: rgba(45,255,168,.4) !important; color: var(--green) !important; }
+.tag.b { border-color: rgba(138,123,255,.4) !important; color: var(--violet) !important; }
+.d-kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+.d-kpis .panel { padding: 8px 10px; }
+.d-kpis .num { font-family: var(--font-num); font-size: 22px; }
+.d-sec { margin-bottom: 14px; }
+.d-sec p { font-size: 11px; color: var(--txt-dim); margin-bottom: 6px; letter-spacing: 1px; }
+</style>

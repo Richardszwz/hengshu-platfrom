@@ -1,79 +1,136 @@
-"""服务启停（方案书 §3.8.1）：自定义 start_cmd 经 Agent 执行，setsid 脱离生命周期。
+"""服务启停（方案书 §3.8.1）：管理员自定义启动命令，双后端自动选择。
 
-P0 提供本地进程实现（subprocess + 进程组）；
-P2 接入 Docker / systemd 后端时实现同一接口。
+后端：
+- docker：Agent 容器挂 /var/run/docker.sock，推理服务跑成容器
+  （--gpus all、端口映射、env、自定义 image + start_cmd 为容器内命令）
+- process：裸机降级，subprocess 进程组（开发机/mock 场景）
+
+切换：AGENT_SERVICE_BACKEND=docker|process，默认按 /var/run/docker.sock 存在与否。
 """
 from __future__ import annotations
 
 import asyncio
+import os
+import shutil
 import signal
-from dataclasses import dataclass, field
 
-from pydantic import BaseModel
+from fastapi import HTTPException
+from pydantic import BaseModel, Field
 
 
 class StartRequest(BaseModel):
-    name: str                    # 服务/实例名
-    start_cmd: str               # 用户自定义启动命令（如 vllm serve ...）
-    port: int
-    env: dict[str, str] = {}
-
-
-@dataclass
-class RunningService:
     name: str
+    image: str = "vllm/vllm-openai:latest"   # 推理容器镜像（管理员可改）
+    start_cmd: str                            # 容器内启动命令（vllm serve ...）
     port: int
-    proc: asyncio.subprocess.Process
-    log_tail: list[str] = field(default_factory=list)
+    workdir: str = "/workspace"
+    env: dict[str, str] = Field(default_factory=dict)
+
+
+def _backend() -> str:
+    forced = os.getenv("AGENT_SERVICE_BACKEND", "")
+    if forced in ("docker", "process"):
+        return forced
+    return "docker" if os.path.exists("/var/run/docker.sock") else "process"
+
+
+# 进程模式句柄（裸机降级用）
+_procs: dict[str, asyncio.subprocess.Process] = {}
+
+
+async def _run(cmd: list[str], timeout: float = 30.0) -> tuple[int, str]:
+    p = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    try:
+        out, _ = await asyncio.wait_for(p.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        p.kill()
+        raise HTTPException(504, f"cmd timeout: {cmd[0]}")
+    return p.returncode or 0, out.decode(errors="ignore")
+
+
+def _docker_available() -> bool:
+    return shutil.which("docker") is not None
+
+
+async def start_docker(req: StartRequest) -> str:
+    if not _docker_available():
+        raise HTTPException(500, "docker CLI unavailable")
+    name = f"hs-svc-{req.name}"
+    env_flags: list[str] = []
+    for k, v in req.env.items():
+        env_flags += ["-e", f"{k}={v}"]
+    rc, out = await _run([
+        "docker", "run", "-d", "--name", name,
+        "--restart", "unless-stopped",
+        "--gpus", "all",
+        "-p", f"{req.port}:{req.port}",
+        "-w", req.workdir,
+        *env_flags,
+        req.image,
+        "sh", "-c", req.start_cmd,
+    ], timeout=120.0)
+    if rc != 0:
+        raise HTTPException(500, f"docker run failed: {out[-400:]}")
+    return f"container {name} started"
+
+
+async def stop_docker(name: str) -> str:
+    cname = f"hs-svc-{name}"
+    rc, out = await _run(["docker", "rm", "-f", cname], timeout=60.0)
+    if rc != 0 and "No such container" not in out:
+        raise HTTPException(500, f"docker rm failed: {out[-300:]}")
+    return f"container {cname} stopped"
+
+
+async def logs_docker(name: str, tail: int) -> list[str]:
+    cname = f"hs-svc-{name}"
+    rc, out = await _run(["docker", "logs", "--tail", str(tail), cname], timeout=30.0)
+    if rc != 0:
+        return [f"[agent] {out.strip()[-200:]}" or f"[agent] container {cname} not found"]
+    return out.splitlines()[-tail:]
+
+
+async def start_process(req: StartRequest) -> str:
+    p = await asyncio.create_subprocess_shell(
+        req.start_cmd,
+        cwd=req.workdir if os.path.isdir(req.workdir) else None,
+        env={**os.environ, **req.env},
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+        preexec_fn=os.setsid if hasattr(os, "setsid") else None,
+    )
+    _procs[req.name] = p
+    return f"pid {p.pid} started"
+
+
+async def stop_process(name: str) -> str:
+    p = _procs.pop(name, None)
+    if p is None:
+        return "not running"
+    try:
+        os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+    except Exception:
+        p.terminate()
+    return "stopped"
+
+
+async def logs_process(name: str, tail: int) -> list[str]:
+    return [f"[agent] process-mode logs: {name} (stdout 未捕获, P1.2 落盘采集)"]
 
 
 class ServiceCtl:
-    def __init__(self) -> None:
-        self.running: dict[str, RunningService] = {}
-
     async def start(self, req: StartRequest) -> str:
-        if req.name in self.running and self.running[req.name].proc.returncode is None:
-            raise RuntimeError(f"{req.name} already running")
-        proc = await asyncio.create_subprocess_shell(
-            req.start_cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True,          # setsid 等价：杀 Agent 不带走服务
-            env={**_base_env(), **req.env},
-        )
-        svc = RunningService(name=req.name, port=req.port, proc=proc)
-        self.running[req.name] = svc
-        asyncio.create_task(self._pump_logs(svc))
-        return f"started pid={proc.pid}"
+        if _backend() == "docker":
+            return await start_docker(req)
+        return await start_process(req)
 
     async def stop(self, name: str) -> str:
-        svc = self.running.get(name)
-        if not svc:
-            return "not running"
-        try:
-            # 先优雅TERM，3s后KILL（进程组）
-            svc.proc.terminate()
-            await asyncio.wait_for(svc.proc.wait(), timeout=3.0)
-        except asyncio.TimeoutError:
-            svc.proc.kill()
-        return "stopped"
+        if _backend() == "docker":
+            return await stop_docker(name)
+        return await stop_process(name)
 
     async def logs(self, name: str, tail: int = 100) -> list[str]:
-        svc = self.running.get(name)
-        return svc.log_tail[-tail:] if svc else []
-
-    async def _pump_logs(self, svc: RunningService) -> None:
-        assert svc.proc.stdout
-        while True:
-            line = await svc.proc.stdout.readline()
-            if not line:
-                break
-            svc.log_tail.append(line.decode(errors="replace").rstrip())
-            if len(svc.log_tail) > 500:
-                del svc.log_tail[:100]
-
-
-def _base_env() -> dict[str, str]:
-    import os
-
-    return dict(os.environ)
+        if _backend() == "docker":
+            return await logs_docker(name, tail)
+        return await logs_process(name, tail)

@@ -50,9 +50,31 @@ async def add_node(req: NodeAddReq, r=Depends(deps.get)) -> dict:
         raise HTTPException(400, "password or private_key required")
     blob = encrypt(req.private_key or req.password or "")
     await r.set(f"{CRED_PREFIX}{req.node_id}", blob)
-    # P1：asyncssh 指纹确认 → 推送安装 Agent（容器/裸机双路径）→ 首次心跳自动上线
     return {"node_id": req.node_id, "credential": "stored(encrypted)",
-            "next": "P1: push-install agent via SSH"}
+            "next": "POST /api/nodes/{node_id}/install 推送安装 Agent"}
+
+
+@router.post("/{node_id}/install")
+async def install_node(node_id: str, req: NodeAddReq, r=Depends(deps.get)) -> dict:
+    """存凭证 → SSH 推送安装 Agent 容器 → 心跳自动上线。"""
+    from ..config import settings
+    from .. import ssh_installer
+
+    if req.node_id != node_id:
+        raise HTTPException(400, "node_id mismatch")
+    if not req.password and not req.private_key:
+        raise HTTPException(400, "password or private_key required")
+    blob = encrypt(req.private_key or req.password or "")
+    await r.set(f"{CRED_PREFIX}{node_id}", blob)
+
+    redis_advertise = settings.redis_advertise or settings.redis_url
+    return await ssh_installer.install(
+        r, node_id=node_id, host=req.hostname, ssh_port=req.ssh_port,
+        username=req.username, password=req.password,
+        private_key=req.private_key,
+        agent_image=settings.agent_image,
+        redis_advertise=redis_advertise,
+        tar_dir=settings.install_tar_dir or None)
 
 
 @router.delete("/{node_id}")

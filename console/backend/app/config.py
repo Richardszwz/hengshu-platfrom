@@ -20,5 +20,10 @@ class Settings(BaseSettings):
     # 凭证主密钥（派生 AES-GCM 密钥；与 Router/Agent 同值）
     master_key: str = "dev-only-insecure-master-change-me"
 
+    # SSH 推送安装
+    agent_image: str = "hengshu/agent:latest"        # 镜像仓库路径（气隙=load tar）
+    redis_advertise: str = ""                        # Agent 回连 Redis 地址；空=取 redis_url
+    install_tar_dir: str = ""                        # 气隙 tar 目录（P5），空=仓库模式
+
 
 settings = Settings()

@@ -1,59 +1,89 @@
-"""主机 GPU 指标采集（架构感知）。
+"""主机 GPU 指标采集（架构自动探测）。
 
-x86_64  → pynvml（NVIDIA 管理库，覆盖 L4/L40S/RTX6000/H100 PCIe）
-aarch64 → Jetson：优先 jtop 的 tegrastats 数据；无 jtop 时降级 /sys 读不到即返回 0
-          （P1 接 Jetson 实机后补 tegrastats 解析，接口已留好）
-任一来源失败都静默归零，不影响心跳与框架级指标。
+优先级：
+1. pynvml（NVIDIA 管理库）：x86 服务器 + aarch64 带驱动机型（DGX Spark 等）
+2. tegrastats（Jetson Orin/Nano）：jtop 依赖 systemd，容器内不可靠，直接读 CLI
+3. 全 0 降级：心跳优先，指标尽力而为
 """
 from __future__ import annotations
 
-import logging
+import platform
 
-from .base import ARCH
+from .tegra import TegraSampler
 
-log = logging.getLogger("gpu-sys")
+_nvm = None           # pynvml 句柄（None=未探测，False=不可用）
+tegra = TegraSampler()
 
 
-class GpuSysSampler:
-    def __init__(self) -> None:
-        self._backend = "none"
-        self._nvml = None
-        self._init()
+def _try_pynvml():
+    global _nvm
+    if _nvm is not None:
+        return _nvm
+    try:
+        import pynvml  # nvidia-ml-py
+        pynvml.nvmlInit()
+        _nvm = pynvml
+    except Exception:
+        _nvm = False
+    return _nvm
 
-    def _init(self) -> None:
-        if ARCH == "x86_64":
-            try:
-                import pynvml  # type: ignore
 
-                pynvml.nvmlInit()
-                self._nvml = pynvml
-                self._backend = "nvml"
-                return
-            except Exception as e:  # noqa: BLE001
-                log.warning("pynvml init failed, gpu sys metrics disabled: %s", e)
-        elif ARCH == "aarch64":
-            # P1：接 jtop 服务（pip install jtop + systemctl）或解析 tegrastats
-            log.info("aarch64 detected (Jetson?): gpu sys metrics via jtop — P1")
-        else:
-            log.info("unknown arch %s: gpu sys metrics disabled", ARCH)
+async def start() -> None:
+    """Agent 启动时调用：若 pynvml 不可用则起 tegrastats 后台。"""
+    if not _try_pynvml():
+        await tegra.start()
 
-    def sample(self) -> dict[str, float]:
-        if self._backend == "nvml" and self._nvml:
-            try:
-                return self._nvml_sample()
-            except Exception as e:  # noqa: BLE001
-                log.warning("nvml sample failed: %s", e)
-        return {"gpu_util": 0.0, "vram": 0.0}
 
-    def _nvml_sample(self) -> dict[str, float]:
-        nvml, n = self._nvml, nvml.nvmlDeviceGetCount()
-        utils, vrams = [], []
-        for i in range(n):
-            h = nvml.nvmlDeviceGetHandleByIndex(i)
-            utils.append(nvml.nvmlDeviceGetUtilizationRates(h).gpu)
-            mem = nvml.nvmlDeviceGetMemoryInfo(h)
-            vrams.append(100.0 * mem.used / mem.total if mem.total else 0.0)
-        return {
-            "gpu_util": sum(utils) / len(utils) if utils else 0.0,
-            "vram": sum(vrams) / len(vrams) if vrams else 0.0,
-        }
+def sample() -> dict:
+    """返回 {gpu_util, vram, temp, power}；任何来源失败都返回全 0。"""
+    nvm = _try_pynvml()
+    if nvm:
+        try:
+            return _sample_nvm(nvm)
+        except Exception:
+            pass
+    t = tegra.sample()
+    if t["gpu_util"] or t["vram"]:
+        return t
+    return {"gpu_util": 0.0, "vram": 0.0, "temp": 0.0, "power": 0.0}
+
+
+def _sample_nvm(nvm) -> dict:
+    from pynvml import (nvmlDeviceGetHandleByIndex,
+                        nvmlDeviceGetMemoryInfo,
+                        nvmlDeviceGetPowerUsage,
+                        nvmlDeviceGetTemperature,
+                        nvmlDeviceGetTemperatureThreshold,
+                        nvmlDeviceGetUtilizationRates)
+    util_sum = vram_sum = temp_max = power_sum = 0.0
+    count = 0
+    try:
+        from pynvml import nvmlDeviceGetCount
+        count = nvmlDeviceGetCount()
+    except Exception:
+        count = 1
+    mem_total_max = 0.0
+    for i in range(count):
+        h = nvmlDeviceGetHandleByIndex(i)
+        u = nvmlDeviceGetUtilizationRates(h)
+        m = nvmlDeviceGetMemoryInfo(h)
+        util_sum += u.gpu
+        mem_total_max = max(mem_total_max, float(m.total))
+        vram_sum += float(m.used)
+        try:
+            t = nvmlDeviceGetTemperature(h, 0)  # NVML_TEMPERATURE_GPU
+            temp_max = max(temp_max, float(t))
+        except Exception:
+            pass
+        try:
+            p = nvmlDeviceGetPowerUsage(h) / 1000.0  # mW→W
+            power_sum += p
+        except Exception:
+            pass
+    n = max(count, 1)
+    return {
+        "gpu_util": round(util_sum / n, 1),
+        "vram": round(vram_sum / mem_total_max * 100, 1) if mem_total_max else 0.0,
+        "temp": temp_max,
+        "power": round(power_sum, 1),
+    }

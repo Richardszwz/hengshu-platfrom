@@ -17,7 +17,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from .collectors.base import CollectorRegistry, Sample
-from .collectors.gpu_sys import GpuSysSampler
+from .collectors.gpu_sys import sample as gpu_sample, start as gpu_start
 from .collectors.ollama import OllamaCollector
 from .collectors.trt import TrtCollector
 from .collectors.tgi import TgiCollector
@@ -46,7 +46,6 @@ def build_collectors() -> CollectorRegistry:
 
 app = FastAPI(title="衡枢 Agent", version="0.1.0")
 ctl = ServiceCtl()
-gpu = GpuSysSampler()
 collectors = build_collectors()
 _redis: aioredis.Redis | None = None
 
@@ -60,6 +59,7 @@ def redis() -> aioredis.Redis:
 async def _startup() -> None:
     global _redis
     _redis = aioredis.from_url(settings.redis_url, decode_responses=True)
+    await gpu_start()  # pynvml 可用则用之，否则起 tegrastats 后台
     asyncio.create_task(heartbeat_loop())
 
 
@@ -89,10 +89,12 @@ async def heartbeat_loop() -> None:
     node_key = f"hs:node:{settings.node_id}"
     while True:
         try:
-            sysm = gpu.sample()
+            sysm = gpu_sample()
             base = {
                 "hostname": socket.gethostname(),
                 "arch": __import__("platform").machine(),
+                "m_temp": str(sysm.get("temp", 0.0)),
+                "m_power": str(sysm.get("power", 0.0)),
                 "last_seen": str(int(time.time())),
             }
             pipe = r.pipeline()
