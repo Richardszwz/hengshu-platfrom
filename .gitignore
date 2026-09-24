@@ -29,3 +29,6 @@ Thumbs.db
 # 数据
 data/
 *.log
+recordings/
+dist/
+.dev-console.log
