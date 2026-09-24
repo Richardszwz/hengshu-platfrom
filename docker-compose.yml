@@ -1,0 +1,86 @@
+# 衡枢 全栈编排：控制台 + Router + Redis（+ demo profile 模拟 4 台 GPU 节点）
+# 用法：
+#   docker compose up -d redis                       # 仅起依赖
+#   docker compose --profile demo up -d              # + console + router + 模拟节点（开发演示）
+# 生产节点通过「控制台 → SSH 纳管 → 推送 Agent」接入，不在本编排内。
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  router:
+    build: ./router
+    profiles: ["demo"]
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      ROUTER_HOST: 0.0.0.0
+      ROUTER_PORT: 9000
+      ROUTER_API_KEY: ${ROUTER_API_KEY:-demo-api-key}
+      MASTER_KEY: ${MASTER_KEY:-dev-only-insecure-master-change-me}
+    ports:
+      - "9000:9000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:9000/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  console:
+    build: ./console
+    profiles: ["demo"]
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      CONSOLE_HOST: 0.0.0.0
+      CONSOLE_PORT: 8080
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
+      SECRET_KEY: ${SECRET_KEY:-dev-only-insecure-secret-change-me}
+      MASTER_KEY: ${MASTER_KEY:-dev-only-insecure-master-change-me}
+    ports:
+      - "8080:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+      router:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8080/api/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # 模拟 4 台 GPU 节点：vLLM×2 / TGI / TRT-LLM + 1 待机，向 Redis 注册实例与指标
+  mock-nodes:
+    image: python:3.11-slim
+    profiles: ["demo"]
+    working_dir: /opt
+    volumes:
+      - ./scripts/mock_agent.py:/opt/mock_agent.py:ro
+    command: ["python", "mock_agent.py", "--redis", "redis://redis:6379/0"]
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # 真实节点 Agent 镜像（P1 起经控制台推送安装到 GPU 节点；本编排仅构建不运行）
+  # 推理节点异构：x86 服务器（L4/L40S/H100 PCIe）+ ARM64（Jetson/边缘盒）
+  # → 镜像必须双架构：docker buildx build --platform linux/amd64,linux/arm64
+  agent:
+    build: ./agent
+    profiles: ["never"]
+    image: hengshu/agent:latest
+
+volumes:
+  redis-data:

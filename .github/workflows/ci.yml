@@ -1,0 +1,91 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  router-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: |
+          python -m pip install -U pip
+          pip install -r router/requirements.txt pytest pytest-asyncio ruff
+      - name: Ruff
+        run: ruff check router/app
+      - name: Pytest
+        run: python -m pytest router/app/tests -q
+
+  console-backend-tests:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: |
+          python -m pip install -U pip
+          pip install -r console/backend/requirements.txt pytest pytest-asyncio httpx ruff
+      - name: Ruff
+        run: ruff check console/backend/app
+      - name: Pytest
+        run: python -m pytest console/backend/tests -q
+        env:
+          REDIS_URL: redis://localhost:6379/0
+          ADMIN_PASSWORD_HASH: ${{ secrets.CI_ADMIN_HASH }}
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: console/frontend/package-lock.json
+      - name: Install & build
+        run: |
+          cd console/frontend
+          npm ci
+          npm run build
+
+  compose-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate compose
+        run: docker compose config --quiet
+
+  # 推理节点异构（x86 + ARM64 Jetson）→ Agent/控制台/Router 镜像全平台构建验证
+  multiarch-build:
+    runs-on: ubuntu-latest
+    needs: [router-tests, console-backend-tests]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      # --load 仅支持单平台；多平台构建成功即验证（产物不进 registry，P1 起推 GHCR）
+      - name: Build agent (amd64+arm64)
+        run: |
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            -t hengshu/agent:ci ./agent
+      - name: Build console (amd64+arm64)
+        run: |
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            -t hengshu/console:ci ./console
+      - name: Build router (amd64+arm64)
+        run: |
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            -t hengshu/router:ci ./router

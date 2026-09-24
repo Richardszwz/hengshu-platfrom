@@ -1,0 +1,10 @@
+"""Redis 键空间约定（console / router / agent 三组件共享）。"""
+
+NODE_PREFIX = "hs:node:"
+MODEL_PREFIX = "hs:model:"
+INST_PREFIX = "hs:inst:"
+SESS_PREFIX = "hs:sess:"
+SESSHIST_PREFIX = "hs:sesshist:"
+EVENTS_KEY = "hs:events"
+TENANT_PREFIX = "hs:tenant:"
+CRED_PREFIX = "hs:cred:"

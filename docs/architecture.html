@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>衡枢 HENGSHU · 架构图 v1.6</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'JetBrains Mono', monospace;
+      background: #020617;
+      min-height: 100vh;
+      padding: 2rem;
+      color: white;
+    }
+    .container { max-width: 1240px; margin: 0 auto; }
+    .header { margin-bottom: 2rem; }
+    .header-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+    .pulse-dot { width: 12px; height: 12px; background: #22d3ee; border-radius: 50%; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100% {opacity:1;} 50% {opacity:0.5;} }
+    h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.025em; }
+    .subtitle { color: #94a3b8; font-size: 0.875rem; margin-left: 1.75rem; }
+    .diagram-container {
+      background: rgba(15,23,42,0.5);
+      border-radius: 1rem;
+      border: 1px solid #1e293b;
+      padding: 1.5rem;
+      overflow-x: auto;
+    }
+    svg { width: 100%; min-width: 960px; display: block; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin-top: 2rem; }
+    .card { background: rgba(15,23,42,0.5); border-radius: 0.75rem; border: 1px solid #1e293b; padding: 1.25rem; }
+    .card-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .card-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .card-dot.cyan { background: #22d3ee; }
+    .card-dot.emerald { background: #34d399; }
+    .card-dot.violet { background: #a78bfa; }
+    .card-dot.rose { background: #fb7185; }
+    .card-dot.amber { background: #fbbf24; }
+    .card h3 { font-size: 0.875rem; font-weight: 600; }
+    .card ul { list-style: none; color: #94a3b8; font-size: 0.75rem; }
+    .card li { margin-bottom: 0.375rem; }
+    .footer { text-align: center; margin-top: 1.5rem; color: #475569; font-size: 0.75rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="header-row">
+        <div class="pulse-dot"></div>
+        <h1>衡枢 HENGSHU · 多机推理 LB 架构 v1.6</h1>
+      </div>
+      <p class="subtitle">定稿 · SSH 纳管 · 仪表盘 · N 节点一主多备 VIP · 控制台无状态全节点 · 会话保持 · Web 终端 · 服务远程启停 · 多机并行单模型 · 规则路由 · 多租户隔离 · REST API + Webhook · 离线交付</p>
+    </div>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 1060 980">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+          </marker>
+          <marker id="arrowhead-green" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#34d399" />
+          </marker>
+          <marker id="arrowhead-violet" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#a78bfa" />
+          </marker>
+          <marker id="arrowhead-rose" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#fb7185" />
+          </marker>
+          <marker id="arrowhead-amber" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#fbbf24" />
+          </marker>
+          <marker id="arrowhead-cyan" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- ============ ARROWS (behind boxes) ============ -->
+
+        <!-- Users -> VIP :9000 -> Router 主 -->
+        <line x1="110" y1="120" x2="208" y2="120" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <line x1="330" y1="120" x2="418" y2="120" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+        <!-- Router 主/备 VRRP -->
+        <line x1="530" y1="150" x2="530" y2="188" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrowhead-rose)"/>
+        <line x1="418" y1="215" x2="336" y2="140" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrowhead-rose)"/>
+        <text x="560" y="176" fill="#fb7185" font-size="8">VRRP 1s / 切换 3s</text>
+
+        <!-- Router 主/备 -> Redis -->
+        <line x1="430" y1="232" x2="308" y2="452" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#arrowhead-violet)"/>
+        <line x1="418" y1="196" x2="300" y2="448" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#arrowhead-violet)"/>
+        <text x="312" y="350" fill="#a78bfa" font-size="8">共享绑定/注册表</text>
+
+        <!-- 管理员 -> 管理 VIP :8080 -> Console -->
+        <line x1="60" y1="380" x2="60" y2="418" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <line x1="60" y1="462" x2="60" y2="492" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="70" y="404" fill="#94a3b8" font-size="8">管理员浏览器</text>
+
+        <!-- Console -> Redis (state) -->
+        <line x1="130" y1="532" x2="130" y2="562" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#arrowhead-violet)"/>
+        <line x1="180" y1="562" x2="180" y2="532" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#arrowhead-violet)"/>
+        <text x="192" y="552" fill="#a78bfa" font-size="8">状态读写</text>
+
+        <!-- Console -> Nodes (SSH push) -->
+        <line x1="268" y1="516" x2="492" y2="560" stroke="#22d3ee" stroke-width="1.5" stroke-dasharray="6,4" marker-end="url(#arrowhead-cyan)"/>
+        <line x1="268" y1="526" x2="832" y2="566" stroke="#22d3ee" stroke-width="1.5" stroke-dasharray="6,4" marker-end="url(#arrowhead-cyan)"/>
+        <line x1="268" y1="536" x2="492" y2="714" stroke="#22d3ee" stroke-width="1.5" stroke-dasharray="6,4" marker-end="url(#arrowhead-cyan)"/>
+        <text x="330" y="556" fill="#22d3ee" font-size="9" transform="rotate(10 330 556)">Web 终端/推送安装：SSH 直达 · 服务启停/心跳：Agent 通道</text>
+
+        <!-- Nodes -> Redis (heartbeat) -->
+        <line x1="512" y1="576" x2="318" y2="596" stroke="#34d399" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#arrowhead-green)"/>
+        <line x1="852" y1="580" x2="322" y2="604" stroke="#34d399" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#arrowhead-green)"/>
+        <line x1="512" y1="730" x2="312" y2="612" stroke="#34d399" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#arrowhead-green)"/>
+        <text x="330" y="640" fill="#34d399" font-size="8" transform="rotate(-8 330 640)">心跳+指标 5s</text>
+
+        <!-- Grafana reads Redis -->
+        <line x1="268" y1="666" x2="300" y2="614" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#arrowhead-amber)"/>
+        <text x="252" y="646" fill="#fbbf24" font-size="8" transform="rotate(-60 252 646)">读取指标流</text>
+
+        <!-- Router -> Nodes (forward) -->
+        <line x1="530" y1="90" x2="596" y2="282" stroke="#34d399" stroke-width="1.5" marker-end="url(#arrowhead-green)"/>
+        <line x1="530" y1="232" x2="596" y2="570" stroke="#34d399" stroke-width="1.5" marker-end="url(#arrowhead-green)"/>
+        <text x="556" y="256" fill="#34d399" font-size="8">转发请求</text>
+
+        <!-- ============ BOUNDARIES ============ -->
+
+        <rect x="180" y="30" width="660" height="230" rx="12" fill="rgba(251,191,36,0.05)" stroke="#fbbf24" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="192" y="50" fill="#fbbf24" font-size="10" font-weight="600">接入层 · N 节点一主多备（keepalived VIP :9000）</text>
+
+        <rect x="20" y="300" width="270" height="500" rx="12" fill="rgba(251,191,36,0.05)" stroke="#fbbf24" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="32" y="320" fill="#fbbf24" font-size="10" font-weight="600">管理面（任一节点可接管）</text>
+
+        <rect x="320" y="300" width="720" height="500" rx="12" fill="rgba(251,191,36,0.05)" stroke="#fbbf24" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="332" y="320" fill="#fbbf24" font-size="10" font-weight="600">数据面 · 推理集群（SSH 纳管，Agent 运行期通道）</text>
+
+        <!-- ============ BOXES ============ -->
+
+        <!-- Users -->
+        <rect x="20" y="90" width="90" height="60" rx="6" fill="#0f172a"/>
+        <rect x="20" y="90" width="90" height="60" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="65" y="116" fill="white" font-size="11" font-weight="600" text-anchor="middle">多用户</text>
+        <text x="65" y="134" fill="#94a3b8" font-size="9" text-anchor="middle">API Clients</text>
+
+        <!-- VIP :9000 -->
+        <rect x="210" y="95" width="120" height="50" rx="6" fill="#0f172a"/>
+        <rect x="210" y="95" width="120" height="50" rx="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="5,3"/>
+        <text x="270" y="116" fill="white" font-size="10" font-weight="600" text-anchor="middle">VIP :9000</text>
+        <text x="270" y="132" fill="#fbbf24" font-size="8" text-anchor="middle">API 入口漂移</text>
+
+        <!-- Router Master -->
+        <rect x="420" y="60" width="200" height="90" rx="6" fill="#0f172a"/>
+        <rect x="420" y="60" width="200" height="90" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="520" y="84" fill="white" font-size="12" font-weight="600" text-anchor="middle">Router · 主</text>
+        <text x="520" y="106" fill="#94a3b8" font-size="9" text-anchor="middle">keepalived MASTER</text>
+        <text x="520" y="122" fill="#94a3b8" font-size="9" text-anchor="middle">tenant 过滤 → 规则路由 → 负载评分 → 会话亲和</text>
+        <text x="520" y="140" fill="#22d3ee" font-size="8" text-anchor="middle">OpenAI 兼容 :9000 · type 字段直达 · API 二次开发钩子</text>
+
+        <!-- Router Backup -->
+        <rect x="420" y="190" width="200" height="60" rx="6" fill="#0f172a"/>
+        <rect x="420" y="190" width="200" height="60" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5" stroke-dasharray="6,3"/>
+        <text x="520" y="214" fill="white" font-size="11" font-weight="600" text-anchor="middle">Router · 备（热备）</text>
+        <text x="520" y="232" fill="#94a3b8" font-size="9" text-anchor="middle">keepalived BACKUP · 同 Redis</text>
+
+        <!-- 管理 VIP :8080 -->
+        <rect x="40" y="418" width="230" height="44" rx="6" fill="#0f172a"/>
+        <rect x="40" y="418" width="230" height="44" rx="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="5,3"/>
+        <text x="155" y="437" fill="white" font-size="10" font-weight="600" text-anchor="middle">管理 VIP :8080</text>
+        <text x="155" y="452" fill="#fbbf24" font-size="8" text-anchor="middle">控制台入口漂移 · kill 任一节点可访问</text>
+
+        <!-- Console -->
+        <rect x="40" y="492" width="230" height="72" rx="6" fill="#0f172a"/>
+        <rect x="40" y="492" width="230" height="72" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="155" y="512" fill="white" font-size="11" font-weight="600" text-anchor="middle">Web 控制台（无状态）</text>
+        <text x="155" y="530" fill="#94a3b8" font-size="9" text-anchor="middle">admin 登录 · SSH 纳管 · 推送安装</text>
+        <text x="155" y="546" fill="#94a3b8" font-size="9" text-anchor="middle">服务启停 · Web 终端 · 仪表盘</text>
+
+        <!-- Redis -->
+        <rect x="40" y="600" width="230" height="60" rx="6" fill="#0f172a"/>
+        <rect x="40" y="600" width="230" height="60" rx="6" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="155" y="620" fill="white" font-size="11" font-weight="600" text-anchor="middle">Redis 主从 + 哨兵</text>
+        <text x="155" y="638" fill="#94a3b8" font-size="9" text-anchor="middle">注册表 · 绑定 · 历史 · 凭证密文 · 审计</text>
+        <text x="155" y="652" fill="#a78bfa" font-size="7" text-anchor="middle">master 挂 → sentinel 30s 提升 replica</text>
+
+        <!-- Grafana -->
+        <rect x="40" y="692" width="110" height="72" rx="6" fill="#0f172a"/>
+        <rect x="40" y="692" width="110" height="72" rx="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="95" y="716" fill="white" font-size="10" font-weight="600" text-anchor="middle">Grafana</text>
+        <text x="95" y="734" fill="#94a3b8" font-size="8" text-anchor="middle">GPU / 队列</text>
+        <text x="95" y="748" fill="#94a3b8" font-size="8" text-anchor="middle">会话 / 告警</text>
+
+        <!-- Health -->
+        <rect x="160" y="692" width="110" height="72" rx="6" fill="#0f172a"/>
+        <rect x="160" y="692" width="110" height="72" rx="6" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="215" y="716" fill="white" font-size="10" font-weight="600" text-anchor="middle">Health</text>
+        <text x="215" y="734" fill="#94a3b8" font-size="8" text-anchor="middle">熔断 · 摘除</text>
+        <text x="215" y="748" fill="#94a3b8" font-size="8" text-anchor="middle">半开探测</text>
+
+        <!-- 凭证说明（Rose note inside 管理面） -->
+        <rect x="40" y="778" width="230" height="0" rx="0" fill="none"/>
+
+        <!-- Node A -->
+        <rect x="340" y="340" width="330" height="150" rx="6" fill="#0f172a"/>
+        <rect x="340" y="340" width="330" height="150" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="505" y="364" fill="white" font-size="11" font-weight="600" text-anchor="middle">节点 A · L40S ×4</text>
+        <text x="505" y="388" fill="#94a3b8" font-size="9" text-anchor="middle">vLLM · Qwen3-30B / 8B</text>
+        <text x="505" y="404" fill="#94a3b8" font-size="9" text-anchor="middle">GPU util / 显存 / 温度 / 功耗 上报</text>
+        <circle cx="365" cy="446" r="3" fill="#22d3ee"/>
+        <text x="375" y="450" fill="#22d3ee" font-size="8">Agent sidecar（SSH 推送安装 · 5s 心跳）</text>
+        <text x="505" y="474" fill="#34d399" font-size="8" text-anchor="middle">status: active</text>
+
+        <!-- Node B -->
+        <rect x="690" y="340" width="330" height="150" rx="6" fill="#0f172a"/>
+        <rect x="690" y="340" width="330" height="150" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="855" y="364" fill="white" font-size="11" font-weight="600" text-anchor="middle">节点 B · RTX 6000</text>
+        <text x="855" y="388" fill="#94a3b8" font-size="9" text-anchor="middle">TGI · Llama-3.3 / Qwen2.5-7B</text>
+        <text x="855" y="404" fill="#94a3b8" font-size="9" text-anchor="middle">/health · /metrics</text>
+        <circle cx="715" cy="446" r="3" fill="#22d3ee"/>
+        <text x="725" y="450" fill="#22d3ee" font-size="8">Agent sidecar</text>
+        <text x="855" y="474" fill="#34d399" font-size="8" text-anchor="middle">status: active</text>
+
+        <!-- Node C -->
+        <rect x="340" y="510" width="330" height="150" rx="6" fill="#0f172a"/>
+        <rect x="340" y="510" width="330" height="150" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="505" y="534" fill="white" font-size="11" font-weight="600" text-anchor="middle">节点 C · Jetson Orin（边缘）</text>
+        <text x="505" y="558" fill="#94a3b8" font-size="9" text-anchor="middle">TRT-LLM · Qwen3-4B</text>
+        <text x="505" y="574" fill="#94a3b8" font-size="9" text-anchor="middle">弱网：心跳超时单独调参</text>
+        <circle cx="365" cy="616" r="3" fill="#22d3ee"/>
+        <text x="375" y="620" fill="#22d3ee" font-size="8">Agent sidecar</text>
+
+        <!-- Node D -->
+        <rect x="690" y="510" width="330" height="150" rx="6" fill="#0f172a"/>
+        <rect x="690" y="510" width="330" height="150" rx="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="6,3"/>
+        <text x="855" y="534" fill="white" font-size="11" font-weight="600" text-anchor="middle">备用 / 弹性节点池</text>
+        <text x="855" y="558" fill="#94a3b8" font-size="9" text-anchor="middle">Agent 启动 → 自动注册入池</text>
+        <text x="855" y="574" fill="#94a3b8" font-size="9" text-anchor="middle">扩容钩子（P3 预留）</text>
+        <text x="855" y="616" fill="#fbbf24" font-size="8" text-anchor="middle">零配置加入 / 摘除</text>
+
+        <!-- 分布式实例组（Node E+F Ray 组） -->
+        <rect x="340" y="680" width="680" height="100" rx="6" fill="rgba(6,78,59,0.25)" stroke="#34d399" stroke-width="1.5" stroke-dasharray="10,4"/>
+        <text x="680" y="700" fill="#34d399" font-size="10" font-weight="600" text-anchor="middle">分布式实例组 · Qwen3-235B（跨 2 机 TP=16，注册为单个逻辑实例）</text>
+        <rect x="360" y="712" width="300" height="52" rx="6" fill="#0f172a"/>
+        <rect x="360" y="712" width="300" height="52" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="510" y="734" fill="white" font-size="10" font-weight="600" text-anchor="middle">节点 E · H100 PCIe ×8（head）</text>
+        <text x="510" y="750" fill="#22d3ee" font-size="8" text-anchor="middle">ray start --head · vLLM API :8000</text>
+        <rect x="680" y="712" width="300" height="52" rx="6" fill="#0f172a"/>
+        <rect x="680" y="712" width="300" height="52" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5" stroke-dasharray="6,3"/>
+        <text x="830" y="734" fill="white" font-size="10" font-weight="600" text-anchor="middle">节点 F · H100 PCIe ×8（worker）</text>
+        <text x="830" y="750" fill="#22d3ee" font-size="8" text-anchor="middle">ray start --address=head</text>
+        <text x="680" y="776" fill="#fb7185" font-size="8" text-anchor="middle">整组注册 / 整组摘除 · 组内任一节点挂 → 全组下线 + 会话重放迁移</text>
+
+        <!-- 凭证标注（嵌入管理面边界底部说明） -->
+        <text x="32" y="792" fill="#fb7185" font-size="8">凭证密文 AES-GCM 存于 Redis · 主密钥=部署时环境变量（全节点一致，可在任一节点解密）</text>
+
+        <!-- ============ LEGEND ============ -->
+        <text x="700" y="844" fill="white" font-size="10" font-weight="600">Legend</text>
+
+        <rect x="700" y="856" width="16" height="10" rx="2" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1"/>
+        <text x="722" y="864" fill="#94a3b8" font-size="8">服务 / 推理节点 / 分布式组</text>
+
+        <rect x="700" y="872" width="16" height="10" rx="2" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1"/>
+        <text x="722" y="880" fill="#94a3b8" font-size="8">控制台</text>
+
+        <rect x="700" y="888" width="16" height="10" rx="2" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1"/>
+        <text x="722" y="896" fill="#94a3b8" font-size="8">Redis 存储</text>
+
+        <rect x="700" y="904" width="16" height="10" rx="2" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1"/>
+        <text x="722" y="912" fill="#94a3b8" font-size="8">鉴权 / 熔断</text>
+
+        <rect x="700" y="920" width="16" height="10" rx="2" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1"/>
+        <text x="722" y="928" fill="#94a3b8" font-size="8">VIP / 监控 / 弹性池</text>
+
+        <rect x="700" y="936" width="16" height="10" rx="2" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1"/>
+        <text x="722" y="944" fill="#94a3b8" font-size="8">客户端 / 管理员</text>
+
+        <line x1="880" y1="861" x2="896" y2="861" stroke="#34d399" stroke-width="1.5"/>
+        <text x="902" y="864" fill="#94a3b8" font-size="8">请求转发（SSE）</text>
+
+        <line x1="880" y1="877" x2="896" y2="877" stroke="#34d399" stroke-width="1.5" stroke-dasharray="4,3"/>
+        <text x="902" y="880" fill="#94a3b8" font-size="8">心跳 / 指标上报</text>
+
+        <line x1="880" y1="893" x2="896" y2="893" stroke="#22d3ee" stroke-width="1.5" stroke-dasharray="4,3"/>
+        <text x="902" y="896" fill="#94a3b8" font-size="8">SSH 推送安装 / Web 终端</text>
+
+        <line x1="880" y1="909" x2="896" y2="909" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="4,3"/>
+        <text x="902" y="912" fill="#94a3b8" font-size="8">绑定/注册表/状态读写</text>
+
+        <line x1="880" y1="925" x2="896" y2="925" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="4,3"/>
+        <text x="902" y="928" fill="#94a3b8" font-size="8">VRRP 状态/接管</text>
+      </svg>
+    </div>
+
+    <div class="cards">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot cyan"></div>
+          <h3>SSH 纳管 · 一次性 bootstrap</h3>
+        </div>
+        <ul>
+          <li>• 控制台填 IP+账密 → asyncssh 连接，指纹确认后信任</li>
+          <li>• 自动采集画像：GPU/OS/Docker/磁盘</li>
+          <li>• 一键推送：节点 token → SFTP 上传 → 远程安装 → 反向注册</li>
+          <li>• 运行期走 Agent 通道；SSH 留作应急</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot rose"></div>
+          <h3>接入层高可用（VIP :9000）</h3>
+        </div>
+        <ul>
+          <li>• 所有节点跑 Router，一主多备，VRRP 心跳互检</li>
+          <li>• VIP 漂移 advert 1s / master_down 3s，中断 3–5s</li>
+          <li>• 备机热备连同一 Redis，接管即服务、会话不丢</li>
+          <li>• 防脑裂：VRRP 同组 + Redis 选主锁</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot amber"></div>
+          <h3>管理面高可用（VIP :8080）★ v1.2</h3>
+        </div>
+        <ul>
+          <li>• 控制台<b>无状态</b>：凭证/配置/审计/任务进度全存 Redis</li>
+          <li>• 全节点部署，keepalived 管理 VIP :8080 漂移</li>
+          <li>• kill 任一节点 → 控制台固定 URL 照常用，凭证可解密</li>
+          <li>• 主密钥=部署时环境变量（不依赖机器指纹）</li>
+          <li>• Redis 主从+哨兵，sentinel 30s 自动切换</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot cyan"></div>
+          <h3>平台管理 ★ v1.3</h3>
+        </div>
+        <ul>
+          <li>• <b>admin 登录</b>：argon2 哈希、会话 TTL 8h、登录限流审计</li>
+          <li>• <b>模型服务远程启停</b>：自定义 start_cmd（vllm serve/docker run/systemctl），stdout/stderr 实时日志</li>
+          <li>• <b>Web 终端</b>：节点列表点"终端"→ xterm.js 交互 Shell（SSH PTY 转发）</li>
+          <li>• 双通道：终端/推送=SSH 直达 · 启停/心跳=Agent 通道</li>
+          <li>• 客户端对推理机无感：只认 VIP:9000 + 模型名 + X-Session-Id</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot emerald"></div>
+          <h3>高级能力 ★ v1.4</h3>
+        </div>
+        <ul>
+          <li>• <b>多机并行单模型</b>：Ray 集群 head/worker 编排，跨机 TP/PP，注册为单个逻辑实例（入口=head:8000）</li>
+          <li>• 分布式组整组注册/整组摘除；组内任一节点挂 → 全组下线 + 会话重放迁移</li>
+          <li>• <b>规则路由</b>：客户端带 type 字段（code/vision/…）→ 规则表直达对应模型；未命中走默认池</li>
+          <li>• 解析顺序：具体 model → type 规则 → 默认池</li>
+          <li>• 约束：跨机 TP 需 ≥10/25GbE；同组节点 GPU 同质</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot amber"></div>
+          <h3>商业化能力 ★ v1.5–1.6 定稿</h3>
+        </div>
+        <ul>
+          <li>• <b>多租户隔离</b>：API Key→tenant→节点子池∩模型子集过滤，越权 403；QPS 限流 + token 用量可查可导出（无账单）</li>
+          <li>• <b>API 二次开发（首期两层）</b>：管理 REST API（OpenAPI 3.1+PAT）· Webhook（HMAC 签名）；Transformer/鉴权适配器 v1.2 即插即用</li>
+          <li>• <b>离线交付</b>：气隙环境可装，四框架镜像 tar 导入即 registry</li>
+          <li>• Web 终端 asciinema 录屏 + 命令黑白名单（商用安全评审）</li>
+          <li>• 技术栈：Python 3.11 全栈 + Vue3/Element Plus + xterm.js + asyncssh + Redis 7</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot violet"></div>
+          <h3>监控仪表盘</h3>
+        </div>
+        <ul>
+          <li>• 节点卡片：GPU util/显存/温度/功耗、CPU/内存/磁盘</li>
+          <li>• 模型视图：running/waiting、TTFT、tokens/s、KV cache</li>
+          <li>• 调度视图：绑定分布、粘性命中率、迁移事件</li>
+          <li>• 告警：掉线、过热、显存打满、队列积压、主备切换</li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="footer">衡枢 HENGSHU · 万流归一，衡以分之 · 方案 v1.6 定稿 · 2026-09-24 · 配套文档 proposal.md</p>
+  </div>
+</body>
+</html>
