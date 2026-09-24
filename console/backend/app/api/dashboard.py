@@ -1,18 +1,50 @@
-"""仪表盘聚合 API：KPI + 事件流（前端 001 驾驶舱页的数据源）。"""
+"""仪表盘聚合 API：KPI + 事件流 + 采样时序（真实数据，无 mock 曲线）。
+
+series 端点自采样设计：每次轮询把当前集群快照差分/追加进 Redis 环形缓冲，
+前端拿到的 60s 曲线全部来自运行中的 Router/Agent 真实计数。
+"""
 from __future__ import annotations
 
 import json
-import math
 import time
 
 from fastapi import APIRouter, Depends
 
 from .. import deps
-from ..keys import EVENTS_KEY, INST_PREFIX, NODE_PREFIX, SESS_PREFIX
+from ..keys import (EVENTS_KEY, INST_PREFIX, NODE_PREFIX, SESS_PREFIX,
+                    SER_QPS_KEY, SER_TPS_KEY, SER_TTFT_KEY, SER_UTIL_PREFIX,
+                    STAT_REQ_KEY)
 from ..security import current_user
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"],
                    dependencies=[Depends(current_user)])
+_SERIES_CAP = 60
+
+
+async def _hgetall_many(r, keys: list[str]) -> list[dict]:
+    """批量 hgetall（pipeline），避免 N 次往返。"""
+    if not keys:
+        return []
+    pipe = r.pipeline()
+    for k in keys:
+        pipe.hgetall(k)
+    return [h for h in await pipe.execute() if h]
+
+
+async def _sess_by_model(r) -> dict[str, int]:
+    """扫描会话 key 按模型聚合（P2 由租户/模型维度直接统计）。"""
+    keys = await r.keys(f"{SESS_PREFIX}*")
+    if not keys:
+        return {}
+    pipe = r.pipeline()
+    for k in keys:
+        pipe.hget(k, "model")
+    models = await pipe.execute()
+    out: dict[str, int] = {}
+    for m in models:
+        if m:
+            out[m] = out.get(m, 0) + 1
+    return out
 
 
 @router.get("/summary")
@@ -21,14 +53,19 @@ async def summary(r=Depends(deps.get)) -> dict:
     node_keys = await r.keys(f"{NODE_PREFIX}*")
     now = time.time()
     nodes_online = 0
+    agent_addrs: dict[str, str] = {}
+    node_gpus: dict[str, str] = {}
     for k in node_keys:
         h = await r.hgetall(k)
+        nid = k.removeprefix(NODE_PREFIX)
         if h and int(h.get("last_seen", "0")) > now - 15:
             nodes_online += 1
+        if h:
+            agent_addrs[nid] = h.get("agent_addr", f"http://{nid}:9100")
+            node_gpus[nid] = h.get("gpu_name", "")
 
     inst_keys = await r.keys(f"{INST_PREFIX}*")
-    insts = [await r.hgetall(k) for k in inst_keys]
-    insts = [h for h in insts if h]
+    insts = await _hgetall_many(r, inst_keys)
     running = [h for h in insts if h.get("status") == "running"]
 
     def wavg(field: str) -> float:
@@ -38,7 +75,17 @@ async def summary(r=Depends(deps.get)) -> dict:
     sess_keys = await r.keys(f"{SESS_PREFIX}*")
 
     events_raw = await r.lrange(EVENTS_KEY, -30, -1)
-    events = [json.loads(e) for e in events_raw]
+    events = []
+    for e in events_raw:
+        try:
+            d = json.loads(e)
+        except json.JSONDecodeError:
+            continue
+        ts = d.get("ts") or d.get("time") or ""
+        events.append({"level": d.get("level", "INFO"),
+                       "time": time.strftime("%H:%M:%S", time.localtime(ts))
+                               if isinstance(ts, (int, float)) else str(ts),
+                       "text": d.get("msg") or d.get("text", "")})
 
     return {
         "nodes_total": len(node_keys),
@@ -50,16 +97,64 @@ async def summary(r=Depends(deps.get)) -> dict:
         "vram_weighted": wavg("m_vram"),
         "ttft_avg": wavg("m_ttft"),
         "tokens_per_s_total": round(sum(float(h.get("m_tps", 0)) for h in running), 1),
+        "sess_by_model": await _sess_by_model(r),
+        "agent_addrs": agent_addrs,
+        "node_gpus": node_gpus,
         "events": events,
     }
 
 
-@router.get("/qps-series")
-async def qps_series(r=Depends(deps.get), points: int = 48) -> dict:
-    """QPS 时序骨架：P2 由 Router 打点入库；P0 返回实例数×心跳频率的模拟曲线供前端联调。"""
+@router.get("/series")
+async def series(r=Depends(deps.get), points: int = _SERIES_CAP) -> dict:
+    """采样时序：QPS(Router 计数差分) / TTFT / TPS / 单节点 GPU util。
+
+    每次调用把当前快照追加进环形缓冲（容量 60），前端每 3s 轮询即得滑动窗口。
+    """
+    now = time.time()
+
+    # --- QPS：Router 累计计数差分 ---
+    req = int(await r.get(STAT_REQ_KEY) or 0)
+    last_req = int(await r.get("hs:stat:last_req") or req)
+    last_ts = float(await r.get("hs:stat:last_ts") or now)
+    dt = max(now - last_ts, 0.5)
+    qps = round((req - last_req) / dt, 1)
+    pipe = r.pipeline()
+    pipe.set("hs:stat:last_req", req)
+    pipe.set("hs:stat:last_ts", now)
+
+    # --- 集群 TTFT / TPS / 节点 util 快照 ---
     inst_keys = await r.keys(f"{INST_PREFIX}*")
-    n = len(inst_keys)
-    base = n * 3.1
-    import math
-    series = [round(base + math.sin(i / 3.2) * base * 0.4, 1) for i in range(points)]
-    return {"model": "simulated(P2 接 Router 实测)", "series": series}
+    insts = [h for h in await _hgetall_many(r, inst_keys) if h.get("status") == "running"]
+    ttft = round(sum(float(h.get("m_ttft", 0)) for h in insts)
+                 / len(insts), 1) if insts else 0.0
+    tps = round(sum(float(h.get("m_tps", 0)) for h in insts), 1)
+
+    node_utils: dict[str, float] = {}
+    node_keys = await r.keys(f"{NODE_PREFIX}*")
+    for nk in node_keys:
+        nid = nk.removeprefix(NODE_PREFIX)
+        node_insts = [h for h in insts if h.get("node") == nid]
+        if node_insts:
+            node_utils[nid] = round(sum(float(h.get("m_gpu_util", 0))
+                                        for h in node_insts) / len(node_insts), 1)
+
+    pipe.rpush(SER_QPS_KEY, qps)
+    pipe.ltrim(SER_QPS_KEY, -points, -1)
+    pipe.rpush(SER_TTFT_KEY, ttft)
+    pipe.ltrim(SER_TTFT_KEY, -points, -1)
+    pipe.rpush(SER_TPS_KEY, tps)
+    pipe.ltrim(SER_TPS_KEY, -points, -1)
+    for nid, u in node_utils.items():
+        pipe.rpush(f"{SER_UTIL_PREFIX}{nid}", u)
+        pipe.ltrim(f"{SER_UTIL_PREFIX}{nid}", -points, -1)
+    await pipe.execute()
+
+    async def _lrange(key: str) -> list[float]:
+        rows = await r.lrange(key, -points, -1)
+        return [float(x) for x in rows]
+
+    out = {"qps": await _lrange(SER_QPS_KEY), "ttft": await _lrange(SER_TTFT_KEY),
+           "tps": await _lrange(SER_TPS_KEY),
+           "node_utils": {nid: await _lrange(f"{SER_UTIL_PREFIX}{nid}")
+                          for nid in node_utils}}
+    return out

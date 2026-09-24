@@ -1,21 +1,19 @@
 <template>
   <div class="login-wrap">
-    <el-card class="login-card">
-      <h1 class="brand">衡枢 <span>HENGSHU</span></h1>
-      <p class="slogan">万流归一，衡以分之</p>
-      <el-form @submit.prevent="doLogin">
-        <el-form-item>
-          <el-input v-model="username" placeholder="用户名" size="large" />
-        </el-form-item>
-        <el-form-item>
-          <el-input v-model="password" type="password" placeholder="密码"
-                    size="large" show-password @keyup.enter="doLogin" />
-        </el-form-item>
-        <el-button type="primary" size="large" style="width:100%" :loading="loading"
-                   @click="doLogin">登 录</el-button>
-      </el-form>
-      <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-top:12px" />
-    </el-card>
+    <div class="panel corner login-panel">
+      <div class="logo">
+        <div class="logo-mark"></div>
+        <div><b>衡枢<span style="color:var(--cyan);font-size:12px;letter-spacing:1px"> HENGSHU</span></b><small>GPU CLUSTER LB</small></div>
+      </div>
+      <p class="login-slogan">万流归一 · 衡以分之</p>
+      <form @submit.prevent="doLogin">
+        <input v-model="username" class="hs-input" placeholder="用户名" autocomplete="username" />
+        <input v-model="password" class="hs-input" type="password" placeholder="密码"
+               autocomplete="current-password" />
+        <button class="hs-btn" type="submit" :disabled="loading">{{ loading ? '验证中…' : '登 录' }}</button>
+      </form>
+      <div v-if="error" class="login-err">{{ error }}</div>
+    </div>
   </div>
 </template>
 
@@ -38,20 +36,9 @@ async function doLogin() {
     await auth.login(username.value, password.value)
     router.push('/')
   } catch (e: any) {
-    error.value = e?.response?.data?.detail || '登录失败'
+    error.value = e?.response?.data?.detail || '登录失败：请检查密码'
   } finally {
     loading.value = false
   }
 }
 </script>
-
-<style scoped>
-.login-wrap {
-  height: 100vh; display: flex; align-items: center; justify-content: center;
-  background: radial-gradient(ellipse at 30% 20%, rgba(0,229,255,0.08), transparent 60%), #0a0e1a;
-}
-.login-card { width: 360px; background: #101828; border: 1px solid rgba(0,229,255,0.2); }
-.brand { color: #00e5ff; font-size: 30px; margin: 0 0 4px; letter-spacing: 6px; }
-.brand span { font-size: 14px; color: #8a94a8; letter-spacing: 3px; }
-.slogan { color: #8a94a8; font-size: 12px; letter-spacing: 4px; margin: 0 0 24px; }
-</style>

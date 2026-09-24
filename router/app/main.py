@@ -22,7 +22,7 @@ from pydantic import BaseModel
 
 from .balancer import pick
 from .config import settings
-from .keys import EVENTS_KEY
+from .keys import EVENTS_KEY, STAT_REQ_KEY
 from .registry import Instance, Registry
 from .session import SessionStore
 
@@ -83,6 +83,7 @@ async def models(_: None = Depends(auth)) -> dict:
 async def chat(req: ChatReq, x_session_id: str | None = Header(default=None),
                _: None = Depends(auth)) -> Response:
     sid = x_session_id or req.session_id or uuid.uuid4().hex
+    await redis().incr(STAT_REQ_KEY)  # QPS 统计：由控制台按时间差分
     candidates = await registry.candidates(req.model)
     if not candidates:
         raise HTTPException(503, f"model '{req.model}' has no live instance")

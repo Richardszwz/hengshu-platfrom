@@ -18,3 +18,5 @@ SESSHIST_PREFIX = "hs:sesshist:"
 EVENTS_KEY = "hs:events"
 TENANT_PREFIX = "hs:tenant:"
 CRED_PREFIX = "hs:cred:"
+
+STAT_REQ_KEY = "hs:stat:req"  # Router 每次 chat 请求 INCR，控制台差分算 QPS

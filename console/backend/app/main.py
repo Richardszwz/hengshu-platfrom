@@ -45,7 +45,8 @@ if static_dir.exists():
         candidate = (static_dir / full_path).resolve()
         if candidate.is_file() and candidate.is_relative_to(static_dir.resolve()):
             return FileResponse(candidate)
-        return FileResponse(_spa_index)
+        # index.html 禁止缓存：防止发版后浏览器用旧 HTML 引用已不存在的旧 hash 资产
+        return FileResponse(_spa_index, headers={"Cache-Control": "no-cache, must-revalidate"})
 
 
 if __name__ == "__main__":

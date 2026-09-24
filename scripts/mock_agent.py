@@ -56,11 +56,18 @@ def heartbeat(r: redis.Redis, t: float) -> None:
         r.hset(key, mapping={
             "hostname": n["hostname"], "arch": n["arch"], "gpu_name": n["gpu_name"],
             "frameworks": n["framework"], "status": "online",
+            "agent_addr": f"http://127.0.0.1:{9200 + i}",
             "last_seen": int(time.time()),
         })
         r.expire(key, NODE_TTL)
         iid = inst_id(nid, 8001 + i)
         ikey = f"hs:inst:{iid}"
+        stopped = r.hget(ikey, "status") == "stopped"
+        if stopped:
+            # 已停止：只续 TTL，指标保持最后一次值（Router 按 status 过滤）
+            r.hset(ikey, mapping={"status": "stopped", "node": nid})
+            r.expire(ikey, NODE_TTL)
+            continue
         r.hset(ikey, mapping={
             "node": nid, "port": 8001 + i, "framework": n["framework"],
             "model": model, "status": "running",
@@ -104,10 +111,44 @@ async def heartbeat_loop() -> None:
         await asyncio.sleep(3.0)
 
 
-# ---------- mock 推理端点（SSE 流式 + /metrics 模拟） ----------
+# ---------- mock 推理端点（SSE 流式 + /metrics 模拟 + 控制 API） ----------
 
-async def run_mock_server(port: int, node: dict, model: str) -> None:
+# 控制 API 日志行池（按框架差异化，模拟真实 Agent 的日志混合输出）
+LOG_POOLS = {
+    "vllm": [
+        ("INFO", "vllm", "Engine 000: prompt 342 tok/s · gen 818 tok/s"),
+        ("INFO", "vllm", "Prefix cache hit 67.2% · 1424/2120 blocks"),
+        ("WARN", "vllm", "GPU vram 93% > watermark 90%"),
+        ("OK", "agent", "heartbeat ok · metrics flush → redis · 12 series"),
+        ("INFO", "router", "route sess → score sticky"),
+    ],
+    "tgi": [
+        ("INFO", "tgi", "batch size 8 · waiting 0 · throughput 605 tok/s"),
+        ("WARN", "tgi", "KV cache fragmentation 12% · compaction scheduled"),
+        ("OK", "tgi", "warmup request 200 · ttft 512ms"),
+        ("INFO", "agent", "heartbeat ok · metrics flush → redis · 12 series"),
+    ],
+    "trt-llm": [
+        ("WARN", "trt", "p95 ttft 402ms > budget 350ms"),
+        ("INFO", "trt", "context 32k · cache 61% · batch 2"),
+        ("INFO", "trt", "engine reload skipped · profile match"),
+        ("OK", "agent", "heartbeat ok · metrics flush → redis · 8 series"),
+    ],
+    "ollama": [
+        ("INFO", "ollama", "model loaded · keep_alive 5m"),
+        ("INFO", "ollama", "eval 22 tok/s · batch 1"),
+        ("OK", "agent", "heartbeat ok · metrics flush → redis · 4 series"),
+    ],
+}
+
+
+async def run_mock_server(port: int, ctl_port: int, node: dict, model: str) -> None:
     from aiohttp import web
+
+    nid = node["node_id"]
+    iid = inst_id(nid, port)
+    fw = node["framework"]
+    r_sync = redis.from_url(REDIS_URL, decode_responses=True)
 
     async def chat(request: web.Request) -> web.StreamResponse:
         resp = web.StreamResponse(headers={
@@ -125,14 +166,37 @@ async def run_mock_server(port: int, node: dict, model: str) -> None:
     async def metrics(request: web.Request) -> web.Response:
         return web.Response(text="mock metrics")
 
+    async def svc_stop(request: web.Request) -> web.Response:
+        r_sync.hset(f"hs:inst:{iid}", "status", "stopped")
+        return web.json_response({"result": f"{model} stopped"})
+
+    async def svc_start(request: web.Request) -> web.Response:
+        r_sync.hset(f"hs:inst:{iid}", "status", "running")
+        return web.json_response({"result": f"{model} started"})
+
+    async def svc_logs(request: web.Request) -> web.Response:
+        tail = int(request.query.get("tail", 100))
+        pool = LOG_POOLS.get(fw, LOG_POOLS["vllm"])
+        now = time.time()
+        lines = [
+            {"t": time.strftime("%H:%M:%S", time.localtime(now - (tail - i) * 47)),
+             "level": lv, "msg": msg, "src": src}
+            for i, (lv, src, msg) in enumerate(
+                (pool * (tail // len(pool) + 1))[:tail])
+        ]
+        return web.json_response({"lines": lines})
+
     app = web.Application()
     app.router.add_post("/v1/chat/completions", chat)
     app.router.add_get("/metrics", metrics)
+    app.router.add_post("/services/stop/{name}", svc_stop)
+    app.router.add_post("/services/start/{name}", svc_start)
+    app.router.add_get("/services/{name}/logs", svc_logs)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", port)
-    await site.start()
-    print(f"[mock] {node['node_id']}({node['arch']}) {model} 推理端点 :{port}")
+    await web.TCPSite(runner, "127.0.0.1", port).start()
+    await web.TCPSite(runner, "127.0.0.1", ctl_port).start()
+    print(f"[mock] {nid}({node['arch']}) {model} 推理 :{port} 控制 :{ctl_port}")
 
 
 async def main(serve: bool) -> None:
@@ -141,7 +205,7 @@ async def main(serve: bool) -> None:
         import aiohttp  # noqa: F401  延迟导入，纯心跳模式无需
         for i, n in enumerate(MOCK_NODES):
             tasks.append(asyncio.create_task(
-                run_mock_server(8001 + i, n, MOCK_MODELS[i % len(MOCK_MODELS)])))
+                run_mock_server(8001 + i, 9200 + i, n, MOCK_MODELS[i % len(MOCK_MODELS)])))
     await asyncio.gather(*tasks)
 
 

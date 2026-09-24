@@ -34,20 +34,33 @@ async def list_services(r=Depends(deps.get)) -> dict:
     return {"services": sorted(services, key=lambda x: (x["model"], x["inst_id"]))}
 
 
+async def _agent_addr(node_id: str, r) -> str:
+    h = await r.hgetall(f"{NODE_PREFIX}{node_id}")
+    if not h:
+        raise HTTPException(404, "node offline")
+    return h.get("agent_addr", f"http://{node_id}:9100")
+
+
 @router.post("/{node_id}/{name}/stop")
 async def stop_service(node_id: str, name: str, r=Depends(deps.get)) -> dict:
-    node = await r.hgetall(f"{NODE_PREFIX}{node_id}")
-    if not node:
-        raise HTTPException(404, "node offline")
+    addr = await _agent_addr(node_id, r)
     async with httpx.AsyncClient(timeout=10.0) as c:
-        resp = await c.post(f"http://{node_id}:9100/services/stop/{name}")
+        resp = await c.post(f"{addr}/services/stop/{name}")
+    return resp.json()
+
+
+@router.post("/{node_id}/{name}/start")
+async def start_service(node_id: str, name: str, r=Depends(deps.get)) -> dict:
+    addr = await _agent_addr(node_id, r)
+    async with httpx.AsyncClient(timeout=10.0) as c:
+        resp = await c.post(f"{addr}/services/start/{name}")
     return resp.json()
 
 
 @router.get("/{node_id}/{name}/logs")
 async def service_logs(node_id: str, name: str, tail: int = 100,
                        r=Depends(deps.get)) -> dict:
+    addr = await _agent_addr(node_id, r)
     async with httpx.AsyncClient(timeout=10.0) as c:
-        resp = await c.get(f"http://{node_id}:9100/services/{name}/logs",
-                           params={"tail": tail})
+        resp = await c.get(f"{addr}/services/{name}/logs", params={"tail": tail})
     return resp.json()
