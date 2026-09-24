@@ -63,17 +63,21 @@ async def install(r: aioredis.Redis, *, node_id: str, host: str, ssh_port: int,
         await _event(r, level, msg)
 
     await log("INFO", f"install ▸ 连接 {username}@{host}:{ssh_port} …")
-    conn_kwargs: dict = {
-        "host": host, "port": ssh_port, "username": username,
-        "known_hosts": None,  # 指纹由 TOFU 逻辑接管
-        "connect_timeout": 15,
-    }
-    if private_key:
-        conn_kwargs["client_keys"] = [asyncssh.import_private_key(private_key)]
-    elif password:
-        conn_kwargs["password"] = password
 
     try:
+        conn_kwargs: dict = {
+            "host": host, "port": ssh_port, "username": username,
+            "known_hosts": None,  # 指纹由 TOFU 逻辑接管
+            "connect_timeout": 15,
+        }
+        if private_key:
+            try:
+                conn_kwargs["client_keys"] = [asyncssh.import_private_key(private_key)]
+            except (asyncssh.KeyImportError, ValueError) as e:
+                raise RuntimeError(f"私钥格式无法解析（需完整 PEM 文本）: {e}") from e
+        elif password:
+            conn_kwargs["password"] = password
+
         async with asyncssh.connect(**conn_kwargs) as conn:
             await _fingerprint_tofu(r, node_id, host, conn)
             await log("OK", f"install ▸ SSH 连接成功({conn.get_server_version() or 'ssh'})")
