@@ -64,6 +64,7 @@ class ChatReq(BaseModel):
     stream: bool = False
     temperature: float | None = None
     max_tokens: int | None = None
+    type: str | None = None  # 规则路由：类型直达（hs:rules 映射），缺省按 model
 
 
 @app.get("/healthz")
@@ -79,21 +80,35 @@ async def models(_: None = Depends(auth)) -> dict:
                      for n in names]}
 
 
+async def resolve_model(model: str, rule_type: str | None) -> str:
+    """规则路由：type 命中 hs:rules 映射则改写目标模型（可单测）。"""
+    if rule_type:
+        mapped = await redis().hget("hs:rules", rule_type)
+        if mapped:
+            return mapped
+    return model
+
+
 @app.post("/v1/chat/completions")
 async def chat(req: ChatReq, x_session_id: str | None = Header(default=None),
+               x_type: str | None = Header(default=None),
                _: None = Depends(auth)) -> Response:
     sid = x_session_id or req.session_id or uuid.uuid4().hex
     await redis().incr(STAT_REQ_KEY)  # QPS 统计：由控制台按时间差分
-    candidates = await registry.candidates(req.model)
+    # 规则路由：X-Type / body.type 命中 hs:rules 映射表则改写目标模型
+    rule_type = x_type or req.type
+    model = await resolve_model(req.model, rule_type)
+    candidates = await registry.candidates(model)
     if not candidates:
-        raise HTTPException(503, f"model '{req.model}' has no live instance")
+        raise HTTPException(503, f"model '{model}' has no live instance"
+                                  + (f" (type '{rule_type}' 映射)" if rule_type and model != req.model else ""))
 
     bound = await sessions.get_binding(sid)
-    bound_id = bound[1] if bound and bound[0] == req.model else None
+    bound_id = bound[1] if bound and bound[0] == model else None
     if bound_id and all(i.inst_id != bound_id for i in candidates):
         bound_id = None                       # 原实例已死 → 迁移
 
-    payload = {"model": req.model, "messages": req.messages,
+    payload = {"model": model, "messages": req.messages,
                "stream": req.stream}
     if req.temperature is not None:
         payload["temperature"] = req.temperature
@@ -110,7 +125,7 @@ async def chat(req: ChatReq, x_session_id: str | None = Header(default=None),
         tried.add(inst.inst_id)
         try:
             resp = await _proxy(inst, payload, req.stream)
-            await sessions.bind(sid, req.model, inst.inst_id)
+            await sessions.bind(sid, model, inst.inst_id)
             await sessions.append_history(sid, req.messages)
             await _event("OK", f"route ▸ sess#{sid[:8]} → {inst.inst_id} score+sticky")
             if not req.stream:

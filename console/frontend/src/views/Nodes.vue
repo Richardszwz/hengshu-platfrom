@@ -54,8 +54,8 @@
               <td>{{ n.hostname }} <span class="dim" v-if="n.hostname">:{{ n.ssh_port || 22 }}</span></td>
               <td class="mono">{{ n.arch || '—' }}</td>
               <td>
-                <span class="st" :class="n.status === 'online' ? 'ok' : 'bad'">
-                  <i></i>{{ n.status === 'online' ? '在线' : '离线' }}
+                <span class="st" :class="n.status === 'online' ? 'ok' : (n.status === 'pending' ? 'wait' : 'bad')">
+                  <i></i>{{ n.status === 'online' ? '在线' : (n.status === 'pending' ? '待上线' : '离线') }}
                 </span>
               </td>
               <td class="mono">{{ n.instances ?? 0 }}</td>
@@ -199,6 +199,7 @@ tr:hover td { background: rgba(0, 200, 255, .04); }
 .st i { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
 .st.ok { color: var(--green); } .st.ok i { background: var(--green); box-shadow: 0 0 6px var(--green); }
 .st.bad { color: var(--red); } .st.bad i { background: var(--red); }
+.st.wait { color: var(--yellow); } .st.wait i { background: var(--yellow); animation: blink 1.6s infinite; }
 .op {
   background: transparent; border: 1px solid var(--line); color: var(--txt-dim);
   font-size: 11px; padding: 3px 10px; cursor: pointer; margin-right: 6px;

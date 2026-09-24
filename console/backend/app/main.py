@@ -7,7 +7,7 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI
 
-from . import deps
+from . import deps, term
 from .api import auth, dashboard, nodes, rules, services, tenants
 from .config import settings
 
@@ -29,7 +29,7 @@ async def healthz() -> dict:
     return {"ok": True, "service": "hengshu-console"}
 
 
-for m in (auth, nodes, services, dashboard, tenants, rules):
+for m in (auth, nodes, services, dashboard, tenants, rules, term):
     app.include_router(m.router)
 
 # 前端 SPA：打包产物由 Dockerfile 拷入 static/。

@@ -4,7 +4,8 @@ FROM python:3.11-slim
 
 WORKDIR /opt/agent
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+ARG PIP_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
+RUN pip install --no-cache-dir -i ${PIP_INDEX} -r requirements.txt
 
 COPY app ./app
 EXPOSE 9100

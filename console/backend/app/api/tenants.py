@@ -1,7 +1,11 @@
-"""租户 API 骨架（P2 实装隔离/限流/用量；P0 仅列表结构）。"""
+"""租户 API：列表 + 创建/删除（P2 实装隔离/限流/用量累计）。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+import secrets
+import time
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 
 from .. import deps
 from ..keys import TENANT_PREFIX
@@ -19,3 +23,32 @@ async def list_tenants(r=Depends(deps.get)) -> dict:
         h = await r.hgetall(k)
         out.append({"tenant_id": k.removeprefix(TENANT_PREFIX), **h})
     return {"tenants": out}
+
+
+class TenantCreateReq(BaseModel):
+    tenant_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{1,31}$")
+    qps_limit: int = Field(default=10, ge=1, le=10000)
+
+
+@router.post("")
+async def create_tenant(req: TenantCreateReq, r=Depends(deps.get)) -> dict:
+    key = f"{TENANT_PREFIX}{req.tenant_id}"
+    if await r.exists(key):
+        raise HTTPException(409, "tenant exists")
+    api_key = f"hs-tnt-{secrets.token_urlsafe(24)}"
+    await r.hset(key, mapping={
+        "qps_limit": str(req.qps_limit),
+        "api_key": api_key,               # 展示一次；哈希存储 P2
+        "tokens_total": "0",
+        "created": str(int(time.time())),
+    })
+    return {"tenant_id": req.tenant_id, "api_key": api_key,
+            "note": "api_key 仅本次返回，请妥善保存"}
+
+
+@router.delete("/{tenant_id}")
+async def delete_tenant(tenant_id: str, r=Depends(deps.get)) -> dict:
+    deleted = await r.delete(f"{TENANT_PREFIX}{tenant_id}")
+    if not deleted:
+        raise HTTPException(404, "tenant not found")
+    return {"removed": tenant_id}

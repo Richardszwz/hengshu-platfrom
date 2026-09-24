@@ -6,7 +6,10 @@ const router = createRouter({
   routes: [
     { path: '/login', name: 'login', component: () => import('../views/Login.vue') },
     { path: '/', name: 'dashboard', component: () => import('../views/Dashboard.vue') },
-    { path: '/nodes', name: 'nodes', component: () => import('../views/Nodes.vue') }
+    { path: '/nodes', name: 'nodes', component: () => import('../views/Nodes.vue') },
+    { path: '/terminal', name: 'terminal', component: () => import('../views/Terminal.vue') },
+    { path: '/tenants', name: 'tenants', component: () => import('../views/Tenants.vue') },
+    { path: '/rules', name: 'rules', component: () => import('../views/Rules.vue') }
   ]
 })
 

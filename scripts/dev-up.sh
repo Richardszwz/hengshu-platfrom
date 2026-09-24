@@ -10,10 +10,12 @@ export REDIS_URL=redis://127.0.0.1:6379/0
 cleanup() { kill $(jobs -p) 2>/dev/null || true; }
 trap cleanup EXIT
 
-echo "==> [1/4] fakeredis (TCP :6379)"
+echo "==> [1/4] fakeredis (TCP :6379, 绑定 ${FAKEREDIS_BIND:-0.0.0.0} — 真机 Agent 需 LAN 可达)"
 $PY -c "
+import os
 from fakeredis import TcpFakeServer
-srv = TcpFakeServer(('127.0.0.1', 6379), server_type='redis')
+bind = os.getenv('FAKEREDIS_BIND', '0.0.0.0')
+srv = TcpFakeServer((bind, 6379), server_type='redis')
 srv.serve_forever()
 " &
 

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from .. import deps
-from ..crypto import encrypt
+from ..crypto import decrypt, encrypt
 from ..keys import CRED_PREFIX, INST_PREFIX, NODE_PREFIX
 from ..security import current_user
 
@@ -27,11 +27,13 @@ class NodeAddReq(BaseModel):
 async def list_nodes(r=Depends(deps.get)) -> dict:
     keys = await r.keys(f"{NODE_PREFIX}*")
     nodes = []
+    seen: set[str] = set()
     for k in keys:
         h = await r.hgetall(k)
         if not h:
             continue
         iid = k.removeprefix(NODE_PREFIX)
+        seen.add(iid)
         insts = await r.keys(f"{INST_PREFIX}{iid}:*")
         nodes.append({
             "node_id": iid,
@@ -40,6 +42,20 @@ async def list_nodes(r=Depends(deps.get)) -> dict:
             "status": "online" if int(h.get("last_seen", "0")) > time.time() - 15 else "offline",
             "last_seen": int(h.get("last_seen", "0")),
             "instances": len(insts),
+        })
+    # 已登记但从未心跳的节点（安装中/失败）也可见
+    for ck in await r.keys("hs:conn:*"):
+        nid = ck.removeprefix("hs:conn:")
+        if nid in seen:
+            continue
+        conn = await r.hgetall(ck)
+        nodes.append({
+            "node_id": nid,
+            "hostname": conn.get("host", ""),
+            "arch": "",
+            "status": "pending",
+            "last_seen": 0,
+            "instances": 0,
         })
     return {"nodes": sorted(nodes, key=lambda x: x["node_id"])}
 
@@ -50,6 +66,9 @@ async def add_node(req: NodeAddReq, r=Depends(deps.get)) -> dict:
         raise HTTPException(400, "password or private_key required")
     blob = encrypt(req.private_key or req.password or "")
     await r.set(f"{CRED_PREFIX}{req.node_id}", blob)
+    # 连接元数据（Web 终端/重装复用；无密钥明文）
+    await r.hset(f"hs:conn:{req.node_id}", mapping={
+        "host": req.hostname, "port": str(req.ssh_port), "username": req.username})
     return {"node_id": req.node_id, "credential": "stored(encrypted)",
             "next": "POST /api/nodes/{node_id}/install 推送安装 Agent"}
 
@@ -63,9 +82,20 @@ async def install_node(node_id: str, req: NodeAddReq, r=Depends(deps.get)) -> di
     if req.node_id != node_id:
         raise HTTPException(400, "node_id mismatch")
     if not req.password and not req.private_key:
-        raise HTTPException(400, "password or private_key required")
+        # 重装场景：请求未带凭证时回退使用已存加密凭证
+        blob = await r.get(f"{CRED_PREFIX}{node_id}")
+        if not blob:
+            raise HTTPException(400, "password or private_key required")
+        cred = decrypt(blob)
+        if "PRIVATE KEY" in cred:
+            req = req.model_copy(update={"private_key": cred, "password": None})
+        else:
+            req = req.model_copy(update={"password": cred})
     blob = encrypt(req.private_key or req.password or "")
     await r.set(f"{CRED_PREFIX}{node_id}", blob)
+    # 连接元数据同步刷新（Web 终端/重装复用；无密钥明文）
+    await r.hset(f"hs:conn:{node_id}", mapping={
+        "host": req.hostname, "port": str(req.ssh_port), "username": req.username})
 
     redis_advertise = settings.redis_advertise or settings.redis_url
     return await ssh_installer.install(
@@ -79,5 +109,6 @@ async def install_node(node_id: str, req: NodeAddReq, r=Depends(deps.get)) -> di
 
 @router.delete("/{node_id}")
 async def remove_node(node_id: str, r=Depends(deps.get)) -> dict:
-    await r.delete(f"{NODE_PREFIX}{node_id}", f"{CRED_PREFIX}{node_id}")
+    await r.delete(f"{NODE_PREFIX}{node_id}", f"{CRED_PREFIX}{node_id}",
+                   f"hs:conn:{node_id}")
     return {"removed": node_id}

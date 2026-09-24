@@ -114,10 +114,17 @@ async def install(r: aioredis.Redis, *, node_id: str, host: str, ssh_port: int,
                 f"-e REDIS_URL='{redis_advertise}' -e NODE_ID='{node_id}' "
                 "-e AGENT_PORT=9100 -p 9100:9100 "
                 "-v /var/run/docker.sock:/var/run/docker.sock "
+                "-v hengshu-agent-data:/data "
                 f"--gpus all {agent_image}"
             )
             rc_out = await _run(conn, cmd, timeout=INSTALL_TIMEOUT)
-            await log("OK", f"install ▸ Agent 容器已启动 {rc_out[:12]}")
+            # 校验容器真实运行（docker run 失败也会输出"Unable to find image..."等文本）
+            state = await _run(conn,
+                               "docker inspect -f '{{.State.Running}}' hengshu-agent 2>/dev/null")
+            if state.strip() != "true":
+                raise RuntimeError(
+                    f"Agent 容器未运行（镜像缺失/启动失败）: {(rc_out or state)[:300]}")
+            await log("OK", f"install ▸ Agent 容器运行中 {rc_out[:12]}")
 
         await log("OK", f"install ▸ {node_id} 纳管完成,等待首次心跳上线")
         return {"node_id": node_id, "arch": arch, "docker": docker_v, "steps": steps}

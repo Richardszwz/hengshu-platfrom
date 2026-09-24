@@ -5,5 +5,6 @@ httpx>=0.27
 pydantic>=2.6
 pydantic-settings>=2.2
 psutil>=5.9
-# GPU 指标：x86 用 pynvml；ARM(Jetson) 自动降级 jtop 接口（本文件保留软依赖，导入失败不致命）
-nvidia-ml-py>=12.0; platform_machine == "x86_64"
+# GPU 指标：pynvml 为纯 Python + NVML 库（来自驱动），x86 与带驱动 aarch64（DGX Spark）均可用；
+# 无 NVML 的平台（Jetson）由 gpu_sys 降级链兜底（tegrastats → 全 0），导入失败不致命
+nvidia-ml-py>=12.0

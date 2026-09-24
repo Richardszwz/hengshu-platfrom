@@ -134,3 +134,13 @@ class ServiceCtl:
         if _backend() == "docker":
             return await logs_docker(name, tail)
         return await logs_process(name, tail)
+
+
+async def is_running(name: str) -> bool:
+    """实例真实运行状态（docker inspect / 进程表）。"""
+    if _backend() == "docker":
+        rc, out = await _run(["docker", "inspect", "-f", "{{.State.Running}}",
+                              f"hs-svc-{name}"], timeout=15.0)
+        return rc == 0 and out.strip() == "true"
+    p = _procs.get(name)
+    return p is not None and p.returncode is None
