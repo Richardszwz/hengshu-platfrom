@@ -80,7 +80,7 @@ async def install(r: aioredis.Redis, *, node_id: str, host: str, ssh_port: int,
 
         async with asyncssh.connect(**conn_kwargs) as conn:
             await _fingerprint_tofu(r, node_id, host, conn)
-            await log("OK", f"install ▸ SSH 连接成功({conn.get_server_version() or 'ssh'})")
+            await log("OK", f"install ▸ SSH 连接成功 {username}@{host}")
 
             arch = (await _run(conn, "uname -m")) or "unknown"
             await log("INFO", f"install ▸ 架构探测: {arch}")
@@ -122,5 +122,6 @@ async def install(r: aioredis.Redis, *, node_id: str, host: str, ssh_port: int,
         await log("OK", f"install ▸ {node_id} 纳管完成,等待首次心跳上线")
         return {"node_id": node_id, "arch": arch, "docker": docker_v, "steps": steps}
     except (asyncssh.Error, asyncio.TimeoutError, RuntimeError, OSError) as e:
-        await log("ERROR", f"install ▸ {node_id} 失败: {e}")
-        return {"node_id": node_id, "error": str(e), "steps": steps}
+        msg = str(e) or f"{type(e).__name__}（连接超时/被重置/协议失败，详见控制台日志）"
+        await log("ERROR", f"install ▸ {node_id} 失败: {msg}")
+        return {"node_id": node_id, "error": msg, "steps": steps}
