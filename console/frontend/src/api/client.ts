@@ -1,4 +1,22 @@
 import axios from 'axios'
+import { useAuthStore } from '../stores/auth'
+import router from '../router'
+
+// 401（token 过期/失效）→ 清登录态并弹回登录页，避免表单里冒 cryptic 报错
+axios.interceptors.response.use(
+  (r) => r,
+  (err) => {
+    const url = err?.config?.url || ''
+    if (err?.response?.status === 401 && !url.includes('/api/auth/login')) {
+      const auth = useAuthStore()
+      if (auth.token) {
+        auth.logout()
+        router.push({ name: 'login' })
+      }
+    }
+    return Promise.reject(err)
+  }
+)
 
 export const api = {
   summary: () => axios.get('/api/dashboard/summary').then(r => r.data),
