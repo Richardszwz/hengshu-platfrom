@@ -138,7 +138,12 @@ async function submit(install: boolean) {
 
 async function remove(n: any) {
   if (!confirm(`删除节点 ${n.node_id}？（仅删除登记与凭证，目标机 Agent 容器需手动清理）`)) return
-  await api.removeNode(n.node_id)
+  try {
+    await api.removeNode(n.node_id)
+  } catch (e: any) {
+    const msg = e?.response?.data?.detail || e?.message || '删除失败'
+    alert(msg)
+  }
   refresh()
 }
 

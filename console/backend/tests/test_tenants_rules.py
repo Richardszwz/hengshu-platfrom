@@ -78,3 +78,34 @@ def test_recorder_v2_format(tmp_path) -> None:
     ev = json.loads(lines[1])
     assert ev[1] == "o" and ev[2] == "hello"
     assert json.loads(lines[2])[2] == "ls\r"
+
+
+def test_remove_online_node_rejected(client) -> None:
+    """在线节点（心跳新鲜）删除 → 409，避免 Agent 重写心跳导致'复活'。"""
+    import asyncio
+    import time as _t
+
+    async def setup():
+        fake = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        app.dependency_overrides[deps.get] = lambda: fake
+        # 在线节点：last_seen 当前时间
+        await fake.hset("hs:node:live-node", mapping={"last_seen": str(int(_t.time()))})
+        return fake
+
+    fake = asyncio.run(setup())
+    resp = client.delete("/api/nodes/live-node")
+    assert resp.status_code == 409
+    assert "在线" in resp.json()["detail"]
+
+    async def setup_dead():
+        past = str(int(_t.time()) - 100)
+        await fake.hset("hs:node:dead-node", mapping={"last_seen": past})
+        await fake.hset("hs:conn:dead-node", mapping={"host": "1.1.1.1", "port": "22", "username": "u"})
+        await fake.sadd("hs:model:qwen3-30b", "dead-node:8001", "gpu-x:8002")
+
+    asyncio.run(setup_dead())
+    resp = client.delete("/api/nodes/dead-node")
+    assert resp.status_code == 200
+    assert resp.json() == {"removed": "dead-node"}
+    assert asyncio.run(fake.exists("hs:node:dead-node", "hs:conn:dead-node")) == 0
+    assert asyncio.run(fake.smembers("hs:model:qwen3-30b")) == {"gpu-x:8002"}

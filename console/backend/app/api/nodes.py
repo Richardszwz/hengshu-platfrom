@@ -109,6 +109,16 @@ async def install_node(node_id: str, req: NodeAddReq, r=Depends(deps.get)) -> di
 
 @router.delete("/{node_id}")
 async def remove_node(node_id: str, r=Depends(deps.get)) -> dict:
+    # 心跳仍活跃的节点不可删除——Agent 每周期重写心跳，删了也会"复活"
+    h = await r.hgetall(f"{NODE_PREFIX}{node_id}")
+    if h and int(h.get("last_seen", "0")) > time.time() - 15:
+        raise HTTPException(409, f"节点 {node_id} 在线（心跳活跃），无法删除；"
+                                  "如需移除请先停止目标机上的 hengshu-agent 容器")
     await r.delete(f"{NODE_PREFIX}{node_id}", f"{CRED_PREFIX}{node_id}",
                    f"hs:conn:{node_id}")
+    # 清理该节点在模型集合里的实例登记（实例 hash 本身随 TTL 过期）
+    for mk in await r.keys(f"hs:model:*"):
+        for iid in await r.smembers(mk):
+            if iid.startswith(f"{node_id}:"):
+                await r.srem(mk, iid)
     return {"removed": node_id}
