@@ -137,7 +137,7 @@ async def heartbeat_loop() -> None:
         try:
             sysm = gpu_sample()
             base = {
-                "hostname": socket.gethostname(),
+                "hostname": os.getenv("NODE_HOSTNAME") or socket.gethostname(),
                 "arch": __import__("platform").machine(),
                 "m_temp": str(sysm.get("temp", 0.0)),
                 "m_power": str(sysm.get("power", 0.0)),

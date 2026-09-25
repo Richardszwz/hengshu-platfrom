@@ -9,8 +9,13 @@
   --red: #ff4d6a;
   --green: #2dffa8;
   --violet: #8a7bff;
+  --yellow: #ffc857;
   --txt: #d7ecf5;
   --txt-dim: #5f7f95;
+  --txt-faint: #4a6a80;
+  --panel-solid: #061426;
+  --mono: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace;
+  --font-num: 'Rajdhani', 'Noto Sans SC', sans-serif;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }

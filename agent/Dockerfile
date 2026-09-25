@@ -4,7 +4,7 @@ FROM python:3.11-slim
 
 WORKDIR /opt/agent
 COPY requirements.txt .
-ARG PIP_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
+ARG PIP_INDEX=https://mirrors.aliyun.com/pypi/simple/
 RUN pip install --no-cache-dir -i ${PIP_INDEX} -r requirements.txt
 
 COPY app ./app

@@ -63,13 +63,22 @@ def _sample_nvm(nvm) -> dict:
     except Exception:
         count = 1
     mem_total_max = 0.0
+    mem_unsupported = False
     for i in range(count):
         h = nvmlDeviceGetHandleByIndex(i)
-        u = nvmlDeviceGetUtilizationRates(h)
-        m = nvmlDeviceGetMemoryInfo(h)
-        util_sum += u.gpu
-        mem_total_max = max(mem_total_max, float(m.total))
-        vram_sum += float(m.used)
+        try:
+            u = nvmlDeviceGetUtilizationRates(h)
+            util_sum += u.gpu
+        except Exception:
+            pass
+        try:
+            m = nvmlDeviceGetMemoryInfo(h)
+            mem_total_max = max(mem_total_max, float(m.total))
+            vram_sum += float(m.used)
+        except Exception:
+            # GB10/Grace-Blackwell 统一内存：NVML 不暴露显存（NotSupported），
+            # 退回主机内存占用作为 UMA 显存近似
+            mem_unsupported = True
         try:
             t = nvmlDeviceGetTemperature(h, 0)  # NVML_TEMPERATURE_GPU
             temp_max = max(temp_max, float(t))
@@ -80,10 +89,29 @@ def _sample_nvm(nvm) -> dict:
             power_sum += p
         except Exception:
             pass
+    if mem_unsupported and not mem_total_max:
+        vram_pct = _host_ram_used_pct()
+    else:
+        vram_pct = round(vram_sum / mem_total_max * 100, 1) if mem_total_max else 0.0
     n = max(count, 1)
     return {
         "gpu_util": round(util_sum / n, 1),
-        "vram": round(vram_sum / mem_total_max * 100, 1) if mem_total_max else 0.0,
+        "vram": vram_pct,
         "temp": temp_max,
         "power": round(power_sum, 1),
     }
+
+
+def _host_ram_used_pct() -> float:
+    """统一内存机型（GB10）显存近似：主机内存占用率。"""
+    try:
+        info = {}
+        with open("/proc/meminfo") as f:
+            for line in f:
+                k, _, rest = line.partition(":")
+                info[k] = float(rest.strip().split()[0])  # kB
+        total = info.get("MemTotal", 0.0)
+        avail = info.get("MemAvailable", 0.0)
+        return round((total - avail) / total * 100, 1) if total else 0.0
+    except Exception:
+        return 0.0

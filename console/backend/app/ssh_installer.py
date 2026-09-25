@@ -103,8 +103,12 @@ async def install(r: aioredis.Redis, *, node_id: str, host: str, ssh_port: int,
                     await log("INFO", f"install ▸ 气隙模式装载 {tar_path}")
                     async with conn.start_sftp_client() as sftp:
                         await sftp.put(tar_path, "/tmp/hengshu-agent.tar")
-                    await _run(conn, "docker load -i /tmp/hengshu-agent.tar", timeout=180)
+                    load_out = await _run(conn, "docker load -i /tmp/hengshu-agent.tar", timeout=300)
                     await _run(conn, "rm -f /tmp/hengshu-agent.tar")
+                    # docker load 失败（格式不符/损坏）必须显式报错，否则 docker run 才暴露且难排查
+                    if "Loaded image" not in load_out:
+                        raise RuntimeError(f"docker load 失败: {load_out[:300]}")
+                    await log("OK", f"install ▸ 镜像装载完成 {load_out.strip().splitlines()[-1][:80]}")
 
             # 清理旧实例（幂等重装）
             await _run(conn,
@@ -117,6 +121,10 @@ async def install(r: aioredis.Redis, *, node_id: str, host: str, ssh_port: int,
                 "-v hengshu-agent-data:/data "
                 f"--gpus all {agent_image}"
             )
+            # 主机名传入容器（否则心跳 hostname 是容器 ID）
+            host_name = await _run(conn, "hostname")
+            if host_name:
+                cmd = cmd.replace("--gpus all", f"-e NODE_HOSTNAME='{host_name.strip()}' --gpus all")
             rc_out = await _run(conn, cmd, timeout=INSTALL_TIMEOUT)
             # 校验容器真实运行（docker run 失败也会输出"Unable to find image..."等文本）
             state = await _run(conn,
