@@ -7,7 +7,10 @@
       </div>
       <form class="rule-form" @submit.prevent="add">
         <input v-model.trim="newType" class="inp" placeholder="类型标识，如 code / vl / chat" required />
-        <input v-model.trim="newModel" class="inp" placeholder="目标模型名（须在集群在线）" required />
+        <input v-model.trim="newModel" class="inp" list="model-options" placeholder="目标模型名（须在集群在线）" required />
+        <datalist id="model-options">
+          <option v-for="m in onlineModels" :key="m" :value="m" />
+        </datalist>
         <button class="btn btn-cyan" type="submit">添加规则</button>
       </form>
       <p v-if="error" class="err">{{ error }}</p>
@@ -35,10 +38,15 @@ const rules = ref<any[]>([])
 const newType = ref('')
 const newModel = ref('')
 const error = ref('')
+const onlineModels = ref<string[]>([])
 
 async function load() {
   const d = await api.rules()
-  rules.value = d.rules || []
+  rules.value = d.rules ?? Object.entries(d).map(([type, model]) => ({ type, model }))
+  try {
+    const svcs = await api.services()
+    onlineModels.value = [...new Set((svcs.services ?? []).map((s: any) => s.model))].sort()
+  } catch { /* 服务列表失败不阻塞规则页 */ }
 }
 async function add() {
   error.value = ''

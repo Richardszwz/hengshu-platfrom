@@ -57,6 +57,12 @@ async def start_docker(req: StartRequest) -> str:
     if not _docker_available():
         raise HTTPException(500, "docker CLI unavailable")
     name = f"hs-svc-{req.name}"
+    if await is_running(req.name):
+        return f"container {name} already running"
+    # 镜像不在本地则先拉取；气隙环境拉取失败也继续 run（镜像可能已离线装载）
+    rc, _ = await _run(["docker", "image", "inspect", req.image], timeout=15.0)
+    if rc != 0:
+        await _run(["docker", "pull", req.image], timeout=600.0)
     env_flags: list[str] = []
     for k, v in req.env.items():
         env_flags += ["-e", f"{k}={v}"]

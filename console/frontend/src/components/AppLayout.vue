@@ -11,8 +11,7 @@
         <router-link to="/terminal" :class="{ on: route.name === 'terminal' }"><span class="ico"></span>Web 终端</router-link>
         <router-link to="/tenants" :class="{ on: route.name === 'tenants' }"><span class="ico"></span>租户管理</router-link>
         <router-link to="/rules" :class="{ on: route.name === 'rules' }"><span class="ico"></span>规则路由</router-link>
-        <a><span class="ico"></span>审计日志</a>
-        <a><span class="ico"></span>系统设置</a>
+        <router-link to="/audit" :class="{ on: route.name === 'audit' }"><span class="ico"></span>审计日志</router-link>
       </nav>
       <div class="side-foot">
         <div class="avatar">R</div>

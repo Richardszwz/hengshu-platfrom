@@ -27,6 +27,9 @@ export const api = {
   installNode: (nodeId: string, payload: object) =>
     axios.post(`/api/nodes/${nodeId}/install`, payload).then(r => r.data),
   removeNode: (nodeId: string) => axios.delete(`/api/nodes/${nodeId}`).then(r => r.data),
+  // 审计：事件流 + 终端录屏
+  auditsEvents: () => axios.get('/api/audits/events').then(r => r.data),
+  recordings: () => axios.get('/api/term/recordings').then(r => r.data),
   services: () => axios.get('/api/services').then(r => r.data),
   launchService: (node: string, payload: object) =>
     axios.post(`/api/services/${node}/start`, payload).then(r => r.data),

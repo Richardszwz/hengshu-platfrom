@@ -6,7 +6,7 @@ import time
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from .. import deps
+from .. import deps, hooks
 from ..crypto import decrypt, encrypt
 from ..keys import CRED_PREFIX, INST_PREFIX, NODE_PREFIX
 from ..security import current_user
@@ -52,6 +52,7 @@ async def list_nodes(r=Depends(deps.get)) -> dict:
         nodes.append({
             "node_id": nid,
             "hostname": conn.get("host", ""),
+            "ssh_port": int(conn.get("port", "22")),
             "arch": "",
             "status": "pending",
             "last_seen": 0,
@@ -98,13 +99,16 @@ async def install_node(node_id: str, req: NodeAddReq, r=Depends(deps.get)) -> di
         "host": req.hostname, "port": str(req.ssh_port), "username": req.username})
 
     redis_advertise = settings.redis_advertise or settings.redis_url
-    return await ssh_installer.install(
+    result = await ssh_installer.install(
         r, node_id=node_id, host=req.hostname, ssh_port=req.ssh_port,
         username=req.username, password=req.password,
         private_key=req.private_key,
         agent_image=settings.agent_image,
         redis_advertise=redis_advertise,
         tar_dir=settings.install_tar_dir or None)
+    # Webhook 通知（HENGSHU_WEBHOOK_URL 设置时启用）
+    await hooks.emit("install.result", {"node_id": node_id, **result})
+    return result
 
 
 @router.delete("/{node_id}")

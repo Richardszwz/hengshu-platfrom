@@ -49,10 +49,56 @@ registry: Registry
 sessions: SessionStore
 
 
-def auth(authorization: str = Header(default="")) -> None:
+def auth(authorization: str = Header(default="")) -> dict:
+    """认证并返回租户上下文：admin key → 无限流；租户 key → hs:tokens 反查。
+    （同步依赖内直接查 Redis——aioredis 是惰性连接，请求期同步调用不安全，
+     故此处只做 admin 快速通道；租户通道由 chat() 异步二次校验。）"""
     token = authorization.removeprefix("Bearer ").strip()
-    if token != settings.router_api_key:
+    if token == settings.router_api_key:
+        return {"tid": "", "tenant": "admin", "qps_limit": 0, "checked": True}
+    return {"tid": "", "tenant": "", "qps_limit": 0, "checked": False, "token": token}
+
+
+async def auth_tenant(ctx: dict) -> dict:
+    """异步租户认证（auth 依赖的补全）：校验租户 key 并回读限额。"""
+    if ctx.get("checked"):
+        return ctx
+    token = ctx.get("token", "")
+    if not token:
         raise HTTPException(401, "invalid api key")
+    r = redis()
+    tid = await r.hget("hs:tokens", token)
+    if not tid:
+        raise HTTPException(401, "invalid api key")
+    t = await r.hgetall(f"hs:tenant:{tid}")
+    if not t:
+        raise HTTPException(403, "tenant not found")
+    ctx.update(tid=tid, tenant=t.get("name", tid),
+               qps_limit=int(t.get("qps_limit", "0")), checked=True)
+    return ctx
+
+
+async def _rate_ok(tid: str, limit: int) -> bool:
+    """租户 QPS 滑动窗口（zset，1 秒窗）：超限额 → False。"""
+    r = redis()
+    now = time.time()
+    key = f"hs:rl:{tid}"
+    async with r.pipeline() as p:
+        p.zremrangebyscore(key, 0, now - 1.0)
+        p.zadd(key, {f"{now}-{uuid.uuid4().hex[:8]}": now})
+        p.zcard(key)
+        p.expire(key, 5)
+        _, _, cnt, _ = await p.execute()
+    return cnt <= limit
+
+
+async def _record_usage(tid: str, usage: dict) -> None:
+    """计量：usage {prompt_tokens, completion_tokens} → hs:tenant:{tid}.tokens_total。"""
+    if not tid or not usage:
+        return
+    total = int(usage.get("prompt_tokens") or 0) + int(usage.get("completion_tokens") or 0)
+    if total > 0:
+        await redis().hincrby(f"hs:tenant:{tid}", "tokens_total", total)
 
 
 # ---------- OpenAI 兼容 ----------
@@ -92,7 +138,11 @@ async def resolve_model(model: str, rule_type: str | None) -> str:
 @app.post("/v1/chat/completions")
 async def chat(req: ChatReq, x_session_id: str | None = Header(default=None),
                x_type: str | None = Header(default=None),
-               _: None = Depends(auth)) -> Response:
+               ctx: dict = Depends(auth)) -> Response:
+    ctx = await auth_tenant(ctx)
+    # 租户 QPS 限流（admin key 无限额）
+    if ctx["qps_limit"] > 0 and not await _rate_ok(ctx["tid"], ctx["qps_limit"]):
+        raise HTTPException(429, f"tenant '{ctx['tenant']}' QPS limit exceeded ({ctx['qps_limit']}/s)")
     sid = x_session_id or req.session_id or uuid.uuid4().hex
     await redis().incr(STAT_REQ_KEY)  # QPS 统计：由控制台按时间差分
     # 规则路由：X-Type / body.type 命中 hs:rules 映射表则改写目标模型
@@ -110,6 +160,9 @@ async def chat(req: ChatReq, x_session_id: str | None = Header(default=None),
 
     payload = {"model": model, "messages": req.messages,
                "stream": req.stream}
+    if req.stream:
+        # 让 vLLM/OpenAI 兼容上游在末块回传 usage（流式计量用）
+        payload["stream_options"] = {"include_usage": True}
     if req.temperature is not None:
         payload["temperature"] = req.temperature
     if req.max_tokens is not None:
@@ -132,9 +185,10 @@ async def chat(req: ChatReq, x_session_id: str | None = Header(default=None),
                 body = json.loads(resp)
                 body["session_id"] = sid
                 body["instance"] = inst.inst_id
+                await _record_usage(ctx["tid"], body.get("usage"))
                 return JSONResponse(body)
             return StreamingResponse(
-                _sse_with_footer(resp, sid, inst.inst_id),
+                _sse_with_footer(resp, sid, inst.inst_id, ctx["tid"]),
                 media_type="text/event-stream",
             )
         except (httpx.HTTPError, json.JSONDecodeError) as e:
@@ -176,9 +230,20 @@ class _SSE:
         await self.client.aclose()
 
 
-async def _sse_with_footer(sse: _SSE, sid: str, inst_id: str):
+async def _sse_with_footer(sse: _SSE, sid: str, inst_id: str, tid: str = ""):
+    usage_seen: dict = {}
     async for chunk in sse:
+        # 流式计量：vLLM/OpenAI 在 stream_options.include_usage 下于末块返回 usage
+        if '"usage"' in chunk and '"prompt_tokens"' in chunk:
+            for ln in chunk.splitlines():
+                if ln.startswith("data: ") and '"usage"' in ln:
+                    try:
+                        usage_seen = json.loads(ln[6:]).get("usage") or {}
+                    except json.JSONDecodeError:
+                        pass
         yield chunk
+    if usage_seen:
+        await _record_usage(tid, usage_seen)
     yield f"data: {json.dumps({'hengshu_meta': {'session_id': sid, 'instance': inst_id}})}\n\n"
 
 

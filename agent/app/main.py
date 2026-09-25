@@ -139,6 +139,8 @@ async def heartbeat_loop() -> None:
             base = {
                 "hostname": os.getenv("NODE_HOSTNAME") or socket.gethostname(),
                 "arch": __import__("platform").machine(),
+                # 控制台下发服务指令/Web终端外的直连地址（ advertise IP:端口 ）
+                "agent_addr": f"http://{_advertise_host()}:{settings.agent_port}",
                 "m_temp": str(sysm.get("temp", 0.0)),
                 "m_power": str(sysm.get("power", 0.0)),
                 "last_seen": str(int(time.time())),

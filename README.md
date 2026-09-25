@@ -1,106 +1,62 @@
-# 衡枢 HENGSHU · 多机推理 API 负载均衡器
+# 衡枢 HENGSHU · 多机推理 API 负载均衡平台
 
-> 万流归一，衡以分之。GPU 集群运维平台 + API 入口。
+> 万流归一，衡以分之。
 
-负载均衡（衡）+ 调度枢纽（枢）：多机多模型推理集群的统一纳管、智能调度、
-OpenAI 兼容 API 网关、会话保持、多租户隔离。
+统一 OpenAI 兼容入口（VIP:9000），SSH 纳管异构推理机集群：评分调度 + 会话保持 + 故障迁移，控制台（:8080）全节点可部署，气隙 tar 交付。
 
-## 异构推理节点（x86 + ARM64）
+## 组件
 
-推理节点支持混合架构部署：
+| 组件 | 说明 | 端口 |
+| --- | --- | --- |
+| `router/` | OpenAI 兼容入口：评分调度、sticky 会话、N 次重试迁移、X-Type 规则路由、多租户 Key 认证 + QPS 限流 + token 计量 | 9000 |
+| `console/` | 管理控制台（Vue3 001 HUD）：驾驶舱、节点管理、Web 终端（审计录屏）、服务启停、租户、规则、审计日志 | 8080 |
+| `agent/` | 节点 Agent：心跳 + GPU 采集 + 服务管控（docker/process 双后端，spec 持久化） | 9100 |
+| `dist/agent-*.tar` | 气隙交付产物（installer 按目标机 `uname -m` 自动选 x86_64 / aarch64） | — |
 
-| 节点类型 | 架构 | 典型机型 | GPU 指标来源 |
-|---|---|---|---|
-| x86 服务器 | amd64 | L4 / RTX 6000 / L40S / H100 PCIe | pynvml |
-| 边缘盒 | arm64 | Jetson AGX Orin / Orin Nano | tegrastats（P1 已实装：解析器+后台采样） |
+## 硬件支持矩阵
 
-- 全部镜像双架构：`docker buildx build --platform linux/amd64,linux/arm64`（CI 已验证）
-- Agent GPU 采集三级自动探测：pynvml（x86 及带驱动 aarch64 如 DGX Spark）→ tegrastats（Jetson）→ 全 0 降级（心跳优先，采集失败不拖垮心跳）
-- 控制台/管理节点若也是 ARM 机器（如 DGX Spark），同一镜像直接跑
+| 平台 | 架构 | GPU 采集路径 | 状态 |
+| --- | --- | --- | --- |
+| x86 + NVIDIA（L4 / RTX 6000 / L40S / H100 PCIe） | amd64 | pynvml（`--gpus all` 标准容器栈） | 单测 + 安装链路覆盖；待真机验收 |
+| Jetson（Orin 等） | arm64 | tegrastats（容器内注入）；无 tegrastats 时 pynvml/降级 | 解析单测覆盖；待真机验收 |
+| DGX Spark（GB10 统一内存） | arm64 | pynvml；显存 NotSupported 自动降级 `/proc/meminfo` 近似 | **S1 真机已验证**（温度/功耗真实回流） |
 
-## P1 节点纳管（SSH 推送安装）
+推理服务容器下发统一 `--gpus all` + `--restart unless-stopped`，镜像缺失先 `docker pull`（气隙环境跳过自动 pull，支持离线装载镜像）。
 
-控制台「节点管理」页完成全流程：填写节点 ID/主机/SSH 凭证（私钥或密码，AES-GCM 加密落库）→
-推送安装 → asyncssh 连接（主机指纹 TOFU，变更即中止）→ 探测 arch/docker/nvidia →
-目标机 `docker run` 拉起 Agent 容器（挂 docker.sock 获得服务管控能力）→ 心跳自动上线。
-
-目标机前置：Docker + NVIDIA 容器运行时 + SSH 可达；Agent 需能回连 `REDIS_ADVERTISE`（默认取控制台 redis_url）。
-气隙变体：`INSTALL_TAR_DIR` 下放 `agent-{arch}.tar` 时自动 scp + docker load。
-
-## 仓库结构
-
-```
-hengshu/
-├── console/                # Web 控制台（Vue3 前端 001 HUD 设计系统 / FastAPI 后端）
-│   ├── backend/            #   控制台 API：认证、节点(SSH 推送安装)、服务、租户、规则、仪表盘
-│   └── frontend/           #   前端 SPA（HUD 深色风，ECharts，无 UI 框架依赖）
-├── router/                 # 数据面 LB：OpenAI 兼容透传、负载评分调度、会话粘性
-│   └── app/
-│       ├── balancer.py     #   评分：0.35·GPU + 0.25·VRAM + 0.25·队列 + 0.15·TTFT，粘性 ÷0.7
-│       ├── registry.py     #   模型实例注册表（Redis）
-│       └── session.py      #   会话绑定 + 历史重放
-├── agent/                  # GPU 节点 Agent：心跳、指标采集（vLLM/TGI/TRT-LLM/Ollama 插件）、服务启停
-│   └── app/collectors/     #   四框架指标采集插件 + GPU 主机采集（架构感知）
-├── scripts/
-│   ├── mock_agent.py       # 模拟 4 台异构节点（无真机时的全链路演示/开发）
-│   ├── dev-up.sh           # 无 Docker 一键全栈（fakeredis + mock + console + router）
-│   └── gen_admin_hash.py   # admin 密码 argon2 哈希生成
-├── docs/                   # 方案书 v1.6 + 架构图 + 仪表盘截图
-└── .github/workflows/ci.yml
-```
-
-## 快速开始
-
-### 方式一：无 Docker 一键全栈（开发机已验证，Windows git-bash 可跑）
+## 快速开始（开发）
 
 ```bash
-python -m venv .venv && .venv/Scripts/pip install \
-  -r router/requirements.txt -r console/backend/requirements.txt \
-  -r scripts/requirements.txt
-bash scripts/dev-up.sh
-# 控制台  http://localhost:8080   (admin / hengshu-dev)
-# Router  http://localhost:9000   (Authorization: Bearer demo-api-key)
+bash scripts/dev-up.sh           # console :8080 + router :9000 + fakeredis
+cd console/frontend && npm run dev   # 前端热更（可选）
 ```
 
-### 方式二：Docker Compose
+登录：admin / `hengshu-dev`（`ADMIN_PASSWORD_HASH` 由 `scripts/gen_admin_hash.py` 生成）。
 
-```bash
-cp .env.example .env
-# .env 写入 ADMIN_PASSWORD_HASH（python scripts/gen_admin_hash.py '你的密码'）
-docker compose up -d redis
-docker compose --profile demo up -d        # console + router + 4 台模拟节点
-```
+## 添加节点
 
-## 冒烟验证
+控制台「节点管理 → 添加节点」：node_id + IP + SSH 用户/密码（或私钥）→ SSH 推送安装 Agent 容器。
+安装器按 `uname -m` 选择 `dist/agent-x86_64.tar` / `dist/agent-aarch64.tar`，TOFU 指纹入库，Redis 地址取 `REDIS_ADVERTISE`（真机跨网段必配）。
 
-```bash
-# 1. 登录拿 token
-TOKEN=$(curl -s -X POST localhost:8080/api/auth/login -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"hengshu-dev"}' | python -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+构建双架构 tar：`bash scripts/build-agent-tars.sh`（需要 Docker Desktop + buildx）。
 
-# 2. 控制台看到 4 台异构节点（2×x86_64 + 2×aarch64）+ 4 个模型服务
-curl -s localhost:8080/api/nodes -H "Authorization: Bearer $TOKEN" | python -m json.tool
-curl -s localhost:8080/api/dashboard/summary -H "Authorization: Bearer $TOKEN" | python -m json.tool
+## 租户与路由
 
-# 3. 网关路由（同一 X-Session-Id 连发两次应命中同一实例，Redis hs:sess:{sid} 可查绑定）
-for i in 1 2; do curl -sN -X POST localhost:9000/v1/chat/completions \
-  -H 'Authorization: Bearer demo-api-key' -H 'X-Session-Id: sticky-test' \
-  -H 'Content-Type: application/json' \
-  -d "{\"model\":\"qwen3-30b\",\"messages\":[{\"role\":\"user\",\"content\":\"msg$i\"}],\"stream\":true}"; done
-```
+- 租户管理页创建租户 → 得到 `sk-...` Key；Router 同时认 admin key（`ROUTER_API_KEY`）与租户 Key。
+- 租户 QPS 超限额 → 429；token 用量累计在 `hs:tenant:{id}.tokens_total`。
+- 规则路由：客户端 `X-Type: code`（或 `body.type`）→ 控制台规则表改写目标模型。
+
+## Webhook
+
+`HENGSHU_WEBHOOK_URL` 环境变量启用：`install.result`（节点安装成败）、`terminal.blocked`（高危命令拦截）。
 
 ## 测试
 
 ```bash
-python -m venv .venv
-.venv/Scripts/pip install -r router/requirements.txt -r console/backend/requirements.txt pytest
-cd router && python -m pytest app/tests -q          # 调度器/粘性单测（7 例）
-cd ../console/backend && python -m pytest tests -q  # 控制台冒烟+安装器 TOFU（5 例）
-cd ../../agent && python -m pytest tests -q         # tegrastats 解析/GPU 降级链/docker argv（13 例）
+cd agent && pytest tests            # 15
+cd router && pytest app/tests       # 10
+cd console/backend && pytest tests  # 12
 ```
 
-## 路线图
+## 尚未实现（P3）
 
-P0 脚手架 ✅ → P1 纳管链路（SSH 推送安装+采集补实+节点管理页，待真机接入验收）→
-P2 智能调度+服务管控 UI+多租户 → P3 高可用+二次开发 → P4 多机并行单模型 → P5 离线交付。
-详见 `docs/PROPOSAL.md`（v1.6 定稿）。
+- N 主一备 VIP 漂移（Keepalived）、多机并行 Ray、HA 控制台

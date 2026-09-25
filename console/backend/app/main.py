@@ -8,7 +8,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from . import deps, term
-from .api import auth, dashboard, nodes, rules, services, tenants
+from .api import auth, dashboard, nodes, rules, services, tenants, audits
 from .config import settings
 
 app = FastAPI(title="衡枢 Console", version="0.1.0")
@@ -29,7 +29,7 @@ async def healthz() -> dict:
     return {"ok": True, "service": "hengshu-console"}
 
 
-for m in (auth, nodes, services, dashboard, tenants, rules, term):
+for m in (auth, nodes, services, dashboard, tenants, rules, term, audits):
     app.include_router(m.router)
 
 # 前端 SPA：打包产物由 Dockerfile 拷入 static/。

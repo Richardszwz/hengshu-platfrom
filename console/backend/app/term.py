@@ -19,7 +19,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi import Depends
 from redis.asyncio import Redis
 
-from . import deps
+from . import deps, hooks
 from .config import settings
 from .crypto import decrypt
 from .keys import CRED_PREFIX, NODE_PREFIX
@@ -163,6 +163,8 @@ async def term_ws(ws: WebSocket) -> None:
                             await _audit(r, "AUDIT", f"term ▸ {user}@{node_id} $ {one[:200]}")
                             if any(p.search(one) for p in BLACKLIST):
                                 await _audit(r, "WARN", f"term ▸ 拦截高危命令: {one[:120]}")
+                                await hooks.emit("terminal.blocked", {
+                                    "node_id": node_id, "user": user, "cmd": one[:200]})
                                 await ws.send_json(
                                     {"type": "blocked", "cmd": one[:120],
                                      "msg": "⛔ 高危命令已被策略拦截（已审计）\r\n"})
