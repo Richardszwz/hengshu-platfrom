@@ -51,11 +51,11 @@
           <div class="p-title">集群综合水位 <span class="sub">WEIGHTED</span></div>
           <div class="gauge-wrap">
             <div ref="elGauge" id="chGauge" class="chart"></div>
-            <div class="gauge-vals" v-if="summary">
-              <div class="gv-num white">{{ Math.round(summary.gpu_util_weighted || 0) }}%</div>
-              <div class="gv-lab">GPU UTIL 加权</div>
-              <div class="gv-num green">{{ Math.round(summary.vram_weighted || 0) }}%</div>
-              <div class="gv-lab">VRAM 加权</div>
+            <div class="gauge-legend" v-if="summary">
+              <span class="gl-item"><i class="dot" style="background:#00e5ff"></i>GPU UTIL 加权
+                <b class="mono">{{ Math.round(summary.gpu_util_weighted || 0) }}%</b></span>
+              <span class="gl-item"><i class="dot" style="background:#2dffa8"></i>VRAM 加权
+                <b class="mono">{{ Math.round(summary.vram_weighted || 0) }}%</b></span>
             </div>
           </div>
         </div>
@@ -510,16 +510,15 @@ onUnmounted(() => {
 
 /* ---------- 图表区 ---------- */
 .grid-a { display: grid; grid-template-columns: 1.6fr 1fr; gap: 12px; }
-/* 水位仪表：ECharts 只画环，数值文字走 HTML 流式排布（永不重叠） */
+/* 水位仪表：ECharts 只画环；数值图例放在图下方（普通文档流，永不重叠） */
 .gauge-wrap { position: relative; }
-.gauge-vals {
-  position: absolute; left: 50%; top: 58%; transform: translate(-50%, -42%);
-  text-align: center; pointer-events: none;
+.gauge-legend {
+  display: flex; justify-content: center; gap: 26px; padding: 2px 0 10px;
+  font-size: 11px; color: var(--txt-dim); letter-spacing: 1px;
 }
-.gv-num { font-family: var(--font-num); font-weight: 700; line-height: 1.05; }
-.gv-num.white { font-size: 36px; color: #fff; }
-.gv-num.green { font-size: 20px; color: #2dffa8; margin-top: 4px; }
-.gv-lab { font-size: 10px; color: var(--txt-dim); letter-spacing: 1px; margin-top: 2px; }
+.gl-item { display: inline-flex; align-items: center; gap: 6px; }
+.gl-item b { color: var(--txt); font-size: 13px; font-family: var(--font-num); }
+.gl-item .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .chart-box { height: 180px; }
 .chart-box.tall { height: 220px; }
 .grid-b { display: grid; grid-template-columns: 1fr 1.2fr 1fr; gap: 12px; }
