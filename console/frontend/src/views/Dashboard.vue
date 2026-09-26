@@ -49,7 +49,15 @@
         </div>
         <div class="panel corner">
           <div class="p-title">集群综合水位 <span class="sub">WEIGHTED</span></div>
-          <div ref="elGauge" id="chGauge" class="chart"></div>
+          <div class="gauge-wrap">
+            <div ref="elGauge" id="chGauge" class="chart"></div>
+            <div class="gauge-vals" v-if="summary">
+              <div class="gv-num white">{{ Math.round(summary.gpu_util_weighted || 0) }}%</div>
+              <div class="gv-lab">GPU UTIL 加权</div>
+              <div class="gv-num green">{{ Math.round(summary.vram_weighted || 0) }}%</div>
+              <div class="gv-lab">VRAM 加权</div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -274,7 +282,7 @@ function renderCharts() {
     }]
   })
 
-  // 集群水位仪表（双环：GPU + VRAM）
+  // 集群水位仪表（双环：GPU + VRAM；文字改 HTML 覆盖层，结构上不可能重叠）
   ensureChart('gauge', elGauge.value)?.setOption({
     series: [
       {
@@ -282,8 +290,7 @@ function renderCharts() {
         progress: { show: true, width: 12, itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [{ offset: 0, color: '#0077ff' }, { offset: 1, color: CY }]), shadowColor: 'rgba(0,229,255,.8)', shadowBlur: 14 } },
         axisLine: { lineStyle: { width: 12, color: [[1, 'rgba(255,255,255,.06)']] } },
         axisTick: { show: false }, splitLine: { show: false }, axisLabel: { show: false }, anchor: { show: false },
-        title: { show: true, offsetCenter: [0, 4], color: AXIS.label, fontSize: 11 },
-        detail: { valueAnimation: true, offsetCenter: [0, -30], fontSize: 38, fontFamily: 'Rajdhani', fontWeight: 700, color: '#fff', formatter: '{value}%' },
+        title: { show: false }, detail: { show: false },
         data: [{ value: s.gpu_util_weighted, name: 'GPU UTIL 加权' }]
       },
       {
@@ -291,8 +298,7 @@ function renderCharts() {
         progress: { show: true, width: 8, itemStyle: { color: GR } },
         axisLine: { lineStyle: { width: 8, color: [[1, 'rgba(255,255,255,.06)']] } },
         axisTick: { show: false }, splitLine: { show: false }, axisLabel: { show: false }, anchor: { show: false },
-        title: { show: true, offsetCenter: [0, 54], color: AXIS.label, fontSize: 10 },
-        detail: { offsetCenter: [0, 30], fontSize: 22, fontFamily: 'Rajdhani', fontWeight: 700, color: GR, formatter: '{value}%' },
+        title: { show: false }, detail: { show: false },
         data: [{ value: s.vram_weighted, name: 'VRAM 加权' }]
       }
     ]
@@ -504,6 +510,16 @@ onUnmounted(() => {
 
 /* ---------- 图表区 ---------- */
 .grid-a { display: grid; grid-template-columns: 1.6fr 1fr; gap: 12px; }
+/* 水位仪表：ECharts 只画环，数值文字走 HTML 流式排布（永不重叠） */
+.gauge-wrap { position: relative; }
+.gauge-vals {
+  position: absolute; left: 50%; top: 58%; transform: translate(-50%, -42%);
+  text-align: center; pointer-events: none;
+}
+.gv-num { font-family: var(--font-num); font-weight: 700; line-height: 1.05; }
+.gv-num.white { font-size: 36px; color: #fff; }
+.gv-num.green { font-size: 20px; color: #2dffa8; margin-top: 4px; }
+.gv-lab { font-size: 10px; color: var(--txt-dim); letter-spacing: 1px; margin-top: 2px; }
 .chart-box { height: 180px; }
 .chart-box.tall { height: 220px; }
 .grid-b { display: grid; grid-template-columns: 1fr 1.2fr 1fr; gap: 12px; }
