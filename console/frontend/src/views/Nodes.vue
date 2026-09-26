@@ -60,7 +60,10 @@
               </td>
               <td class="mono">{{ n.instances ?? 0 }}</td>
               <td class="dim">{{ fmtAgo(n.last_seen) }}</td>
-              <td><button class="op danger" @click="remove(n)">删除</button></td>
+              <td>
+                <button v-if="n.status === 'online'" class="op go" @click="openLaunch(n)">启动服务</button>
+                <button class="op danger" @click="remove(n)">删除</button>
+              </td>
             </tr>
             <tr v-if="!nodes.length">
               <td colspan="7" class="empty">暂无节点 — 点击右上角「添加节点」开始纳管</td>
@@ -70,11 +73,33 @@
       </div>
       <p class="svc-dim">提示：删除仅清除登记与凭证；目标机上的 Agent 容器需 SSH 手动 docker rm -f hengshu-agent</p>
     </div>
+
+    <!-- 启动服务对话框（节点行触发，节点预选） -->
+    <div class="mask" :class="{ on: launchOpen }" @click="launchOpen = false"></div>
+    <div class="launch-dialog panel" :class="{ open: launchOpen }">
+      <div class="p-title">启动新服务 <span class="sub">下发至 {{ launch.node }} · Docker 运行</span></div>
+      <div class="launch-body">
+        <label>服务/模型名 <input v-model.trim="launch.name" class="inp" placeholder="如 Qwen3-8B" /></label>
+        <label>镜像 <input v-model.trim="launch.image" class="inp" placeholder="vllm/vllm-openai:latest（arm64 节点填 GB10/Jetson 兼容镜像）" /></label>
+        <label>启动命令 <input v-model.trim="launch.start_cmd" class="inp mono-inp"
+          placeholder="vllm serve /models/qwen --port {port} --served-model-name Qwen3-8B" /></label>
+        <label>服务端口 <input v-model.number="launch.port" class="inp" type="number" placeholder="8100" /></label>
+        <label>环境变量（每行 KEY=VALUE）<textarea v-model="launch.envText" class="inp env-inp" rows="3"
+          placeholder="HF_ENDPOINT=https://hf-mirror.com"></textarea></label>
+        <label>卷挂载（每行 宿主机路径:容器路径[:ro]，模型权重必配）<textarea v-model="launch.volText" class="inp env-inp" rows="2"
+          placeholder="/data/models:/models:ro"></textarea></label>
+        <p v-if="launchError" class="err">{{ launchError }}</p>
+      </div>
+      <div class="launch-foot">
+        <button class="mini-btn" @click="launchOpen = false">取消</button>
+        <button class="mini-btn go" :disabled="launchBusy" @click="submitLaunch">{{ launchBusy ? '下发中…' : '启动' }}</button>
+      </div>
+    </div>
   </AppLayout>
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, reactive, ref } from 'vue'
 import { api } from '../api/client'
 import AppLayout from '../components/AppLayout.vue'
 
@@ -147,6 +172,46 @@ async function remove(n: any) {
   refresh()
 }
 
+/* ---------- 启动服务对话框（入口在节点行） ---------- */
+const launchOpen = ref(false)
+const launchBusy = ref(false)
+const launchError = ref('')
+const launch = reactive({ node: '', name: '', image: 'vllm/vllm-openai:latest', start_cmd: '', port: 8100, envText: '', volText: '' })
+
+function openLaunch(n: any) {
+  launch.node = n.node_id
+  launchError.value = ''
+  launchOpen.value = true
+}
+
+async function submitLaunch() {
+  launchError.value = ''
+  if (!launch.node || !launch.name || !launch.start_cmd || !launch.port) {
+    launchError.value = '名称/命令/端口必填'
+    return
+  }
+  const env: Record<string, string> = {}
+  for (const line of launch.envText.split('\n')) {
+    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$/)
+    if (m) env[m[1]] = m[2]
+  }
+  const volumes = launch.volText.split('\n').map(s => s.trim()).filter(s => /^\/[^:]+:\/[^:]+(:ro|:rw)?$/.test(s))
+  launchBusy.value = true
+  try {
+    await api.launchService(launch.node, {
+      name: launch.name, image: launch.image,
+      start_cmd: launch.start_cmd.replaceAll('{port}', String(launch.port)),
+      port: launch.port, workdir: '/workspace', env, volumes
+    })
+    launchOpen.value = false
+    refresh()
+  } catch (e: any) {
+    launchError.value = e?.response?.data?.detail || e?.message || '下发失败'
+  } finally {
+    launchBusy.value = false
+  }
+}
+
 onMounted(() => {
   refresh()
   timer = window.setInterval(refresh, 4000)
@@ -210,5 +275,43 @@ tr:hover td { background: rgba(0, 200, 255, .04); }
   font-size: 11px; padding: 3px 10px; cursor: pointer; margin-right: 6px;
 }
 .op:hover { color: var(--red); border-color: rgba(255, 77, 90, .4); }
+.op.go { color: var(--cyan, #37b6ff); border-color: rgba(55, 182, 255, .4); }
+.op.go:hover { color: #fff; border-color: var(--cyan, #37b6ff); }
 .svc-dim { color: var(--txt-faint); font-size: 11px; margin-top: 8px; }
+
+/* ---------- 启动服务对话框 ---------- */
+.mask {
+  position: fixed; inset: 0; background: rgba(2, 6, 12, .6); z-index: 90;
+  opacity: 0; pointer-events: none; transition: opacity .2s;
+}
+.mask.on { opacity: 1; pointer-events: auto; }
+.launch-dialog {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(.96);
+  width: 520px; z-index: 100; opacity: 0; pointer-events: none;
+  background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+  transition: opacity .2s, transform .2s;
+}
+.launch-dialog.open { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%) scale(1); }
+.launch-dialog .p-title { padding: 12px 16px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 13px; }
+.launch-dialog .p-title .sub { color: var(--muted-foreground, #8b98b8); font-size: 11px; margin-left: 8px; font-weight: 400; }
+.launch-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.launch-body label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted-foreground, #8b98b8); }
+.launch-body .inp {
+  background: rgba(0, 30, 50, .6); border: 1px solid var(--border); color: inherit;
+  padding: 7px 10px; font-size: 12px; outline: none; font-family: inherit; border-radius: 4px;
+}
+.launch-body .inp:focus { border-color: var(--accent, #37b6ff); }
+.mono-inp { font-family: var(--font-mono, monospace) !important; }
+.env-inp { resize: vertical; }
+.launch-body .err { color: #ff5f6b; font-size: 12px; margin: 0; }
+.launch-foot {
+  display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+.mini-btn {
+  background: transparent; border: 1px solid var(--border); color: inherit;
+  font-size: 12px; padding: 6px 16px; cursor: pointer; border-radius: 4px;
+}
+.mini-btn.go { border-color: var(--accent, #37b6ff); color: var(--accent, #37b6ff); }
+.mini-btn.go:disabled { opacity: .5; cursor: not-allowed; }
 </style>

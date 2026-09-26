@@ -1,5 +1,33 @@
 <template>
   <AppLayout crumb-prefix="HENGSHU" crumb-title="租户管理">
+    <!-- 对外接入信息：客户端从这里拿地址与用法 -->
+    <div class="panel api-panel">
+      <div class="p-head">
+        <h3>对外 API 接入</h3>
+        <span class="sub">OpenAI 兼容统一入口 · 业务方凭下方 Key 调用</span>
+      </div>
+      <div class="api-grid">
+        <div class="api-item">
+          <span class="k">接入地址</span>
+          <code class="mono endpoint">{{ apiBase }}</code>
+        </div>
+        <div class="api-item">
+          <span class="k">认证方式</span>
+          <span class="v">请求头 <code class="mono">Authorization: Bearer &lt;API Key&gt;</code>（下方租户 Key 或管理员 Key）</span>
+        </div>
+        <div class="api-item">
+          <span class="k">调用示例</span>
+          <pre class="mono curl">curl {{ apiBase }}/chat/completions \
+  -H "Authorization: Bearer sk-…" -H "Content-Type: application/json" \
+  -d '{"model":"Qwen3-8B","messages":[{"role":"user","content":"hi"}]}'</pre>
+        </div>
+        <div class="api-item">
+          <span class="k">规则路由</span>
+          <span class="v">请求头 <code class="mono">X-Type: &lt;类型&gt;</code> 命中「规则路由」页映射时改写目标模型</span>
+        </div>
+      </div>
+    </div>
+
     <div class="panel">
       <div class="p-head">
         <h3>多租户</h3>
@@ -46,6 +74,9 @@ const createdKey = ref('')
 const createdId = ref('')
 const error = ref('')
 
+// 对外 API 统一入口（Router 端口默认 9000，随部署环境变量变化）
+const apiBase = `${location.protocol}//${location.hostname}:9000/v1`
+
 async function load() {
   const d = await api.tenants()
   tenants.value = d.tenants || []
@@ -68,6 +99,17 @@ onMounted(load)
 </script>
 
 <style scoped>
+.api-panel { margin-bottom: 12px; }
+.api-grid { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.api-item { display: flex; gap: 12px; align-items: baseline; font-size: 12px; }
+.api-item .k { flex: 0 0 72px; color: var(--txt-dim); font-size: 11px; letter-spacing: 1px; }
+.api-item .endpoint { color: var(--cyan); font-size: 13px; }
+.api-item .v { color: var(--txt); }
+.api-item .curl {
+  margin: 0; padding: 8px 10px; background: rgba(0, 30, 50, .6);
+  border: 1px solid var(--line); font-size: 11px; color: var(--txt); white-space: pre-wrap;
+}
+.mono { font-family: var(--mono); }
 .p-head { padding: 12px 14px; border-bottom: 1px solid var(--line); }
 .p-head h3 { margin: 0; font-size: 14px; color: var(--cyan); letter-spacing: 1px; }
 .p-head .sub { font-size: 11px; color: var(--txt-dim); }

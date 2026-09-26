@@ -99,7 +99,6 @@
       <!-- 服务表 -->
       <div class="panel corner svc">
         <div class="p-title">模型服务实例 <span class="sub">{{ services.length }} SERVICES · {{ runningCount }} RUNNING</span>
-          <button class="mini-btn launch-btn" @click="launchOpen = true">＋ 启动服务</button>
         </div>
         <table class="hs-table">
           <thead><tr><th>服务</th><th>节点</th><th>框架</th><th>状态</th><th>GPU</th><th>TTFT</th><th>TOKENS/S</th><th>操作</th></tr></thead>
@@ -122,33 +121,6 @@
           </tbody>
         </table>
       </div>
-
-    <!-- 启动服务对话框 -->
-    <div class="mask" :class="{ on: launchOpen }" @click="launchOpen = false"></div>
-    <div class="launch-dialog panel corner" :class="{ open: launchOpen }">
-      <div class="p-title">启动新服务 <span class="sub">下发至目标机 Docker 运行</span></div>
-      <div class="launch-body">
-        <label>目标节点
-          <select v-model="launch.node" class="inp">
-            <option v-for="n in onlineNodeIds" :key="n" :value="n">{{ n }}</option>
-          </select>
-        </label>
-        <label>服务/模型名 <input v-model.trim="launch.name" class="inp" placeholder="如 Qwen3-8B" /></label>
-        <label>镜像 <input v-model.trim="launch.image" class="inp" placeholder="vllm/vllm-openai:latest" /></label>
-        <label>启动命令 <input v-model.trim="launch.start_cmd" class="inp mono-inp"
-          placeholder="vllm serve /models/qwen --port {port} --served-model-name Qwen3-8B" /></label>
-        <label>服务端口 <input v-model.number="launch.port" class="inp" type="number" placeholder="8100" /></label>
-        <label>环境变量（每行 KEY=VALUE）<textarea v-model="launch.envText" class="inp env-inp" rows="3"
-          placeholder="HF_ENDPOINT=https://hf-mirror.com"></textarea></label>
-        <label>卷挂载（每行 宿主机路径:容器路径[:ro]，模型权重必配）<textarea v-model="launch.volText" class="inp env-inp" rows="2"
-          placeholder="/data/models:/models:ro"></textarea></label>
-        <p v-if="launchError" class="err">{{ launchError }}</p>
-      </div>
-      <div class="launch-foot">
-        <button class="mini-btn" @click="launchOpen = false">取消</button>
-        <button class="mini-btn go" :disabled="launchBusy" @click="submitLaunch">{{ launchBusy ? '下发中…' : '启动' }}</button>
-      </div>
-    </div>
 
     <!-- 节点详情抽屉 -->
     <div class="mask" :class="{ on: drawerOpen }" @click="closeDrawer"></div>
@@ -190,7 +162,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, shallowRef } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef } from 'vue'
 import * as echarts from 'echarts'
 import { api } from '../api/client'
 import AppLayout from '../components/AppLayout.vue'
@@ -457,40 +429,6 @@ async function stop(s: any) {
   await refresh()
 }
 
-/* ---------- 启动服务对话框 ---------- */
-const launchOpen = ref(false)
-const launchBusy = ref(false)
-const launchError = ref('')
-const launch = reactive({ node: '', name: '', image: 'vllm/vllm-openai:latest', start_cmd: '', port: 8100, envText: '', volText: '' })
-const onlineNodeIds = computed(() => Object.keys(summary.value?.agent_addrs || {}))
-
-async function submitLaunch() {
-  launchError.value = ''
-  if (!launch.node || !launch.name || !launch.start_cmd || !launch.port) {
-    launchError.value = '节点/名称/命令/端口必填'
-    return
-  }
-  const env: Record<string, string> = {}
-  for (const line of launch.envText.split('\n')) {
-    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$/)
-    if (m) env[m[1]] = m[2]
-  }
-  const volumes = launch.volText.split('\n').map(s => s.trim()).filter(s => /^\/[^:]+:\/[^:]+(:ro|:rw)?$/.test(s))
-  launchBusy.value = true
-  try {
-    await api.launchService(launch.node, {
-      name: launch.name, image: launch.image,
-      start_cmd: launch.start_cmd.replaceAll('{port}', String(launch.port)),
-      port: launch.port, workdir: '/workspace', env, volumes
-    })
-    launchOpen.value = false
-    await refresh()
-  } catch (e: any) {
-    launchError.value = e?.response?.data?.detail || e?.message || '下发失败'
-  } finally {
-    launchBusy.value = false
-  }
-}
 async function start(s: any) {
   await api.startService(s.node, s.model)
   await refresh()
@@ -614,28 +552,7 @@ onUnmounted(() => {
 .evt .l.ERROR { color: var(--red); }
 .evts .empty { color: var(--txt-faint); font-size: 11px; }
 
-/* ---------- 启动服务对话框 ---------- */
-.launch-btn { margin-left: 10px; }
-.launch-dialog {
-  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(.96);
-  width: 520px; z-index: 60; opacity: 0; pointer-events: none;
-  transition: opacity .2s, transform .2s;
-}
-.launch-dialog.open { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%) scale(1); }
-.launch-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
-.launch-body label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--txt-dim); }
-.launch-body .inp {
-  background: rgba(0, 30, 50, .6); border: 1px solid var(--line); color: var(--txt);
-  padding: 7px 10px; font-size: 12px; outline: none; font-family: inherit;
-}
-.launch-body .inp:focus { border-color: var(--cyan-dim); }
-.mono-inp { font-family: var(--mono) !important; }
-.env-inp { resize: vertical; }
-.launch-body .err { color: var(--red); font-size: 12px; margin: 0; }
-.launch-foot {
-  display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px;
-  border-top: 1px solid var(--line);
-}
+/* ---------- 启动服务对话框样式已随入口迁往 Nodes.vue ---------- */
 
 .svc table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .svc th {
