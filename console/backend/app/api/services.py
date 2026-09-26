@@ -22,6 +22,8 @@ class StartServiceReq(BaseModel):
     port: int
     workdir: str = "/workspace"
     env: dict[str, str] = {}
+    # 卷挂载：["宿主机路径:容器路径[:ro]"]——模型权重靠它进容器
+    volumes: list[str] = []
 
 
 @router.get("")
@@ -63,10 +65,12 @@ async def launch_service(node_id: str, req: StartServiceReq, r=Depends(deps.get)
         resp = await c.post(f"{addr}/services/start", json=req.model_dump())
     if resp.status_code != 200:
         raise HTTPException(resp.status_code, resp.text[:200])
+    import json as _json
     spec = req.model_dump()
-    await r.hset(f"{SPEC_PREFIX}{node_id}:{req.name}",
-                 mapping={k: (v if isinstance(v, str) else str(v)) for k, v in spec.items()})
-    await r.hset(f"{SPEC_PREFIX}{node_id}:{req.name}", mapping={"env_json": __import__("json").dumps(req.env)})
+    scalar = {k: str(v) for k, v in spec.items() if k not in ("env", "volumes")}
+    scalar["env_json"] = _json.dumps(req.env)
+    scalar["volumes_json"] = _json.dumps(req.volumes)
+    await r.hset(f"{SPEC_PREFIX}{node_id}:{req.name}", mapping=scalar)
     return resp.json()
 
 
@@ -93,6 +97,7 @@ async def start_service(node_id: str, name: str, r=Depends(deps.get)) -> dict:
                 "port": int(spec.get("port", "0")),
                 "workdir": spec.get("workdir", "/workspace"),
                 "env": _json.loads(spec.get("env_json", "{}")),
+                "volumes": _json.loads(spec.get("volumes_json", "[]")),
             }
             resp = await c.post(f"{addr}/services/start", json=payload)
         else:

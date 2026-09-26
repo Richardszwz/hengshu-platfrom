@@ -25,6 +25,8 @@ class StartRequest(BaseModel):
     port: int
     workdir: str = "/workspace"
     env: dict[str, str] = Field(default_factory=dict)
+    # 卷挂载：["宿主机路径:容器路径[:ro]"]，模型权重必须靠它进容器
+    volumes: list[str] = Field(default_factory=list)
 
 
 def _backend() -> str:
@@ -66,13 +68,19 @@ async def start_docker(req: StartRequest) -> str:
     env_flags: list[str] = []
     for k, v in req.env.items():
         env_flags += ["-e", f"{k}={v}"]
+    vol_flags: list[str] = []
+    for vol in req.volumes:
+        # 仅接受 host:container[:opts] 形式，防注入
+        parts = vol.split(":")
+        if len(parts) in (2, 3) and parts[0].startswith("/") and parts[1].startswith("/"):
+            vol_flags += ["-v", vol]
     rc, out = await _run([
         "docker", "run", "-d", "--name", name,
         "--restart", "unless-stopped",
         "--gpus", "all",
         "-p", f"{req.port}:{req.port}",
         "-w", req.workdir,
-        *env_flags,
+        *env_flags, *vol_flags,
         req.image,
         "sh", "-c", req.start_cmd,
     ], timeout=120.0)

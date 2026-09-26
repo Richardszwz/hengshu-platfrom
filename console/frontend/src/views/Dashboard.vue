@@ -140,6 +140,8 @@
         <label>服务端口 <input v-model.number="launch.port" class="inp" type="number" placeholder="8100" /></label>
         <label>环境变量（每行 KEY=VALUE）<textarea v-model="launch.envText" class="inp env-inp" rows="3"
           placeholder="HF_ENDPOINT=https://hf-mirror.com"></textarea></label>
+        <label>卷挂载（每行 宿主机路径:容器路径[:ro]，模型权重必配）<textarea v-model="launch.volText" class="inp env-inp" rows="2"
+          placeholder="/data/models:/models:ro"></textarea></label>
         <p v-if="launchError" class="err">{{ launchError }}</p>
       </div>
       <div class="launch-foot">
@@ -459,7 +461,7 @@ async function stop(s: any) {
 const launchOpen = ref(false)
 const launchBusy = ref(false)
 const launchError = ref('')
-const launch = reactive({ node: '', name: '', image: 'vllm/vllm-openai:latest', start_cmd: '', port: 8100, envText: '' })
+const launch = reactive({ node: '', name: '', image: 'vllm/vllm-openai:latest', start_cmd: '', port: 8100, envText: '', volText: '' })
 const onlineNodeIds = computed(() => Object.keys(summary.value?.agent_addrs || {}))
 
 async function submitLaunch() {
@@ -473,12 +475,13 @@ async function submitLaunch() {
     const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$/)
     if (m) env[m[1]] = m[2]
   }
+  const volumes = launch.volText.split('\n').map(s => s.trim()).filter(s => /^\/[^:]+:\/[^:]+(:ro|:rw)?$/.test(s))
   launchBusy.value = true
   try {
     await api.launchService(launch.node, {
       name: launch.name, image: launch.image,
       start_cmd: launch.start_cmd.replaceAll('{port}', String(launch.port)),
-      port: launch.port, workdir: '/workspace', env
+      port: launch.port, workdir: '/workspace', env, volumes
     })
     launchOpen.value = false
     await refresh()
