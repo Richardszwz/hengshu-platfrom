@@ -481,7 +481,8 @@ onUnmounted(() => {
 .kpi .num { font-family: var(--font-num); font-size: clamp(20px, 1.9vw, 34px); font-weight: 700; color: var(--txt); line-height: 1; white-space: nowrap; }
 .kpi .num small { font-size: clamp(10px, 0.75vw, 12px); color: var(--txt-dim); font-weight: 400; margin-left: 4px; }
 .kpi .lab { color: var(--txt-dim); font-size: 11px; margin-top: 6px; letter-spacing: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.delta { position: absolute; right: 12px; top: 12px; font-size: 11px; font-family: var(--mono); white-space: nowrap; }
+/* delta 改静态行内（不再绝对定位）——内容长度可变，绝对定位必撞大数字 */
+.delta { display: block; text-align: right; font-size: 11px; font-family: var(--mono); margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .delta.up { color: var(--green); }
 .delta.down { color: var(--red); }
 
