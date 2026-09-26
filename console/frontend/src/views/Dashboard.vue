@@ -282,8 +282,8 @@ function renderCharts() {
         progress: { show: true, width: 12, itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [{ offset: 0, color: '#0077ff' }, { offset: 1, color: CY }]), shadowColor: 'rgba(0,229,255,.8)', shadowBlur: 14 } },
         axisLine: { lineStyle: { width: 12, color: [[1, 'rgba(255,255,255,.06)']] } },
         axisTick: { show: false }, splitLine: { show: false }, axisLabel: { show: false }, anchor: { show: false },
-        title: { show: true, offsetCenter: [0, '32%'], color: AXIS.label, fontSize: 12 },
-        detail: { valueAnimation: true, offsetCenter: [0, '-2%'], fontSize: 44, fontFamily: 'Rajdhani', fontWeight: 700, color: '#fff', formatter: '{value}%' },
+        title: { show: true, offsetCenter: [0, 4], color: AXIS.label, fontSize: 11 },
+        detail: { valueAnimation: true, offsetCenter: [0, -30], fontSize: 38, fontFamily: 'Rajdhani', fontWeight: 700, color: '#fff', formatter: '{value}%' },
         data: [{ value: s.gpu_util_weighted, name: 'GPU UTIL 加权' }]
       },
       {
@@ -291,8 +291,8 @@ function renderCharts() {
         progress: { show: true, width: 8, itemStyle: { color: GR } },
         axisLine: { lineStyle: { width: 8, color: [[1, 'rgba(255,255,255,.06)']] } },
         axisTick: { show: false }, splitLine: { show: false }, axisLabel: { show: false }, anchor: { show: false },
-        title: { show: true, offsetCenter: [0, '36%'], color: AXIS.label, fontSize: 11 },
-        detail: { offsetCenter: [0, '2%'], fontSize: 26, fontFamily: 'Rajdhani', fontWeight: 700, color: GR, formatter: '{value}%' },
+        title: { show: true, offsetCenter: [0, 54], color: AXIS.label, fontSize: 10 },
+        detail: { offsetCenter: [0, 30], fontSize: 22, fontFamily: 'Rajdhani', fontWeight: 700, color: GR, formatter: '{value}%' },
         data: [{ value: s.vram_weighted, name: 'VRAM 加权' }]
       }
     ]
