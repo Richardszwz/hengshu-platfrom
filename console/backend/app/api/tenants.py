@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from .. import deps
 from ..keys import TENANT_PREFIX
-from ..security import current_user
+from ..security import current_user, require_role
 
 router = APIRouter(prefix="/api/tenants", tags=["tenants"],
                    dependencies=[Depends(current_user)])
@@ -30,7 +30,7 @@ class TenantCreateReq(BaseModel):
     qps_limit: int = Field(default=10, ge=1, le=10000)
 
 
-@router.post("")
+@router.post("", dependencies=[Depends(require_role("operator"))])
 async def create_tenant(req: TenantCreateReq, r=Depends(deps.get)) -> dict:
     key = f"{TENANT_PREFIX}{req.tenant_id}"
     if await r.exists(key):
@@ -46,7 +46,7 @@ async def create_tenant(req: TenantCreateReq, r=Depends(deps.get)) -> dict:
             "note": "api_key 仅本次返回，请妥善保存"}
 
 
-@router.delete("/{tenant_id}")
+@router.delete("/{tenant_id}", dependencies=[Depends(require_role("operator"))])
 async def delete_tenant(tenant_id: str, r=Depends(deps.get)) -> dict:
     deleted = await r.delete(f"{TENANT_PREFIX}{tenant_id}")
     if not deleted:

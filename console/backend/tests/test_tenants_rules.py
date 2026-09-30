@@ -14,10 +14,17 @@ from app.security import current_user
 
 @pytest.fixture()
 def client():
+    import asyncio
+    from app.security import hash_password, issue_token
+
     fake = fakeredis.aioredis.FakeRedis(decode_responses=True)
     app.dependency_overrides[deps.get] = lambda: fake
-    app.dependency_overrides[current_user] = lambda: "admin"
+    # 不覆盖 current_user：全链路走真实 JWT+用户库（admin token 见下）
+    asyncio.run(fake.hset("hs:user:admin", mapping={
+        "password_hash": hash_password("x12345"), "role": "admin",
+        "enabled": "1", "created": "1"}))
     with TestClient(app) as c:
+        c.headers["Authorization"] = "Bearer " + issue_token("admin")["access_token"]
         yield c
     app.dependency_overrides.clear()
 
@@ -124,19 +131,51 @@ def test_settings_webhook_and_password(client) -> None:
     # 非法协议拦截
     assert client.put("/api/settings/webhook", json={"url": "ftp://x"}).status_code == 400
 
-    # 改密：先在 Redis 覆盖一个已知哈希（测试环境无 ADMIN_PASSWORD_HASH）
-    import asyncio
-    from app.security import hash_password
-    fake = app.dependency_overrides[deps.get]()
-    asyncio.run(fake.hset("hs:settings", "admin_hash", hash_password("oldpass1")))
-    # 旧密码错误 → 403
-    assert client.post("/api/settings/password", json={
+    # 改密：种子用户 admin 的密码是 x12345（fixture），走 /api/users/me/password
+    assert client.post("/api/users/me/password", json={
         "old_password": "wrong", "new_password": "newpass123"}).status_code == 403
-    # 正确改密 → 200
-    assert client.post("/api/settings/password", json={
-        "old_password": "oldpass1", "new_password": "newpass123"}).status_code == 200
+    assert client.post("/api/users/me/password", json={
+        "old_password": "x12345", "new_password": "newpass123"}).status_code == 200
     # 新密码可登录、旧密码失效
     assert client.post("/api/auth/login", json={
         "username": "admin", "password": "newpass123"}).status_code == 200
     assert client.post("/api/auth/login", json={
-        "username": "admin", "password": "oldpass1"}).status_code == 401
+        "username": "admin", "password": "x12345"}).status_code == 401
+
+
+def test_users_crud_and_role_guard(client) -> None:
+    """用户管理：CRUD + 角色越权 403 + 禁用即失效 + 不能删/改自己。"""
+    import asyncio
+    from app.security import hash_password, issue_token
+    fake = app.dependency_overrides[deps.get]()
+
+    # 列表：初始含 admin
+    users = client.get("/api/users").json()["users"]
+    assert [u["username"] for u in users] == ["admin"] and users[0]["role"] == "admin"
+
+    # 创建 viewer
+    r = client.post("/api/users", json={"username": "v1", "password": "view123", "role": "viewer"})
+    assert r.status_code == 200
+    assert client.post("/api/users", json={"username": "v1", "password": "view123", "role": "viewer"}).status_code == 409
+    assert client.post("/api/users", json={"username": "bad name!", "password": "view123", "role": "viewer"}).status_code == 400
+
+    # viewer 登录 → 能读（GET 走 current_user override 之外的真实路径这里直接发 token）
+    vt = issue_token("v1")["access_token"]
+    assert client.get("/api/dashboard/summary", headers={"Authorization": f"Bearer {vt}"}).status_code == 200
+    # viewer 改租户 → 403（operator+）
+    assert client.post("/api/tenants", headers={"Authorization": f"Bearer {vt}"},
+                       json={"name": "t", "qps_limit": 5}).status_code == 403
+    # viewer 改设置 → 403（admin）
+    assert client.get("/api/settings", headers={"Authorization": f"Bearer {vt}"}).status_code == 403
+
+    # 禁用 v1 → 其 token 立即 401
+    assert client.put("/api/users/v1", json={"enabled": False}).status_code == 200
+    assert client.get("/api/dashboard/summary", headers={"Authorization": f"Bearer {vt}"}).status_code == 401
+
+    # 自残保护
+    assert client.delete("/api/users/admin").status_code == 400
+    assert client.put("/api/users/admin", json={"role": "viewer"}).status_code == 400
+
+    # 删除
+    assert client.delete("/api/users/v1").status_code == 200
+    assert client.delete("/api/users/v1").status_code == 404

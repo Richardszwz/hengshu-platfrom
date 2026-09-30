@@ -34,8 +34,15 @@ export const api = {
   settingsGet: () => axios.get('/api/settings').then(r => r.data),
   settingsSetWebhook: (url: string) => axios.put('/api/settings/webhook', { url }).then(r => r.data),
   settingsTestWebhook: () => axios.post('/api/settings/webhook/test').then(r => r.data),
-  settingsChangePwd: (old_password: string, new_password: string) =>
-    axios.post('/api/settings/password', { old_password, new_password }).then(r => r.data),
+  // 用户管理（admin）+ 自助改密
+  usersList: () => axios.get('/api/users').then(r => r.data),
+  usersCreate: (username: string, password: string, role: string) =>
+    axios.post('/api/users', { username, password, role }).then(r => r.data),
+  usersUpdate: (username: string, payload: object) =>
+    axios.put(`/api/users/${username}`, payload).then(r => r.data),
+  usersDelete: (username: string) => axios.delete(`/api/users/${username}`).then(r => r.data),
+  changeMyPwd: (old_password: string, new_password: string) =>
+    axios.post('/api/users/me/password', { old_password, new_password }).then(r => r.data),
   services: () => axios.get('/api/services').then(r => r.data),
   launchService: (node: string, payload: object) =>
     axios.post(`/api/services/${node}/start`, payload).then(r => r.data),

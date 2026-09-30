@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from .. import deps, hooks
 from ..crypto import decrypt, encrypt
 from ..keys import CRED_PREFIX, INST_PREFIX, NODE_PREFIX
-from ..security import current_user
+from ..security import current_user, require_role
 
 router = APIRouter(prefix="/api/nodes", tags=["nodes"], dependencies=[Depends(current_user)])
 
@@ -61,7 +61,7 @@ async def list_nodes(r=Depends(deps.get)) -> dict:
     return {"nodes": sorted(nodes, key=lambda x: x["node_id"])}
 
 
-@router.post("")
+@router.post("", dependencies=[Depends(require_role("operator"))])
 async def add_node(req: NodeAddReq, r=Depends(deps.get)) -> dict:
     if not req.password and not req.private_key:
         raise HTTPException(400, "password or private_key required")
@@ -74,7 +74,7 @@ async def add_node(req: NodeAddReq, r=Depends(deps.get)) -> dict:
             "next": "POST /api/nodes/{node_id}/install 推送安装 Agent"}
 
 
-@router.post("/{node_id}/install")
+@router.post("/{node_id}/install", dependencies=[Depends(require_role("operator"))])
 async def install_node(node_id: str, req: NodeAddReq, r=Depends(deps.get)) -> dict:
     """存凭证 → SSH 推送安装 Agent 容器 → 心跳自动上线。"""
     from ..config import settings
@@ -111,7 +111,7 @@ async def install_node(node_id: str, req: NodeAddReq, r=Depends(deps.get)) -> di
     return result
 
 
-@router.delete("/{node_id}")
+@router.delete("/{node_id}", dependencies=[Depends(require_role("operator"))])
 async def remove_node(node_id: str, r=Depends(deps.get)) -> dict:
     # 心跳仍活跃的节点不可删除——Agent 每周期重写心跳，删了也会"复活"
     h = await r.hgetall(f"{NODE_PREFIX}{node_id}")

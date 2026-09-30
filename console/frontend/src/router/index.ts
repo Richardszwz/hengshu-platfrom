@@ -11,7 +11,8 @@ const router = createRouter({
     { path: '/tenants', name: 'tenants', component: () => import('../views/Tenants.vue') },
     { path: '/rules', name: 'rules', component: () => import('../views/Rules.vue') },
     { path: '/audit', name: 'audit', component: () => import('../views/Audit.vue') },
-    { path: '/settings', name: 'settings', component: () => import('../views/Settings.vue') }
+    { path: '/settings', name: 'settings', component: () => import('../views/Settings.vue') },
+    { path: '/users', name: 'users', component: () => import('../views/Users.vue') }
   ]
 })
 

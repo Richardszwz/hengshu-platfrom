@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from .. import deps, hooks
 from ..config import settings
-from ..security import current_user, hash_password, verify_password
+from ..security import current_user, require_role
 
 router = APIRouter(prefix="/api/settings", tags=["settings"],
                    dependencies=[Depends(current_user)])
@@ -33,7 +33,7 @@ async def get_admin_hash(r) -> str:
     return v or settings.admin_password_hash
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(require_role("admin"))])
 async def get_settings(r=Depends(deps.get)) -> dict:
     webhook = await get_webhook_url(r)
     try:
@@ -58,7 +58,7 @@ class WebhookReq(BaseModel):
     url: str  # 空串 = 关闭通知
 
 
-@router.put("/webhook")
+@router.put("/webhook", dependencies=[Depends(require_role("admin"))])
 async def set_webhook(req: WebhookReq, r=Depends(deps.get)) -> dict:
     url = req.url.strip()
     if url and not url.startswith(("http://", "https://")):
@@ -67,7 +67,7 @@ async def set_webhook(req: WebhookReq, r=Depends(deps.get)) -> dict:
     return {"webhook_url": url}
 
 
-@router.post("/webhook/test")
+@router.post("/webhook/test", dependencies=[Depends(require_role("admin"))])
 async def test_webhook(r=Depends(deps.get)) -> dict:
     url = await get_webhook_url(r)
     if not url:
@@ -76,17 +76,4 @@ async def test_webhook(r=Depends(deps.get)) -> dict:
     return {"sent": True, "url": url}
 
 
-class PasswordReq(BaseModel):
-    old_password: str
-    new_password: str
-
-
-@router.post("/password")
-async def change_password(req: PasswordReq, r=Depends(deps.get)) -> dict:
-    if len(req.new_password) < 6:
-        raise HTTPException(400, "新密码至少 6 位")
-    current = await get_admin_hash(r)
-    if not current or not verify_password(req.old_password, current):
-        raise HTTPException(403, "原密码错误")
-    await r.hset(SETTINGS_KEY, "admin_hash", hash_password(req.new_password))
-    return {"ok": True, "msg": "密码已更新，请重新登录"}
+# 改密已迁至 /api/users/me/password（多用户自助改密，写入用户库）

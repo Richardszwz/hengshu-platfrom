@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from .. import deps
 from ..keys import INST_PREFIX, MODEL_PREFIX, NODE_PREFIX
-from ..security import current_user
+from ..security import current_user, require_role
 
 router = APIRouter(prefix="/api/services", tags=["services"],
                    dependencies=[Depends(current_user)])
@@ -57,7 +57,7 @@ async def _agent_addr(node_id: str, r) -> str:
     return h.get("agent_addr", f"http://{node_id}:9100")
 
 
-@router.post("/{node_id}/start")
+@router.post("/{node_id}/start", dependencies=[Depends(require_role("operator"))])
 async def launch_service(node_id: str, req: StartServiceReq, r=Depends(deps.get)) -> dict:
     """启动新服务（完整 StartRequest 下发 Agent），并持久化 spec 供重启复用。"""
     addr = await _agent_addr(node_id, r)
@@ -74,7 +74,7 @@ async def launch_service(node_id: str, req: StartServiceReq, r=Depends(deps.get)
     return resp.json()
 
 
-@router.post("/{node_id}/{name}/stop")
+@router.post("/{node_id}/{name}/stop", dependencies=[Depends(require_role("operator"))])
 async def stop_service(node_id: str, name: str, r=Depends(deps.get)) -> dict:
     addr = await _agent_addr(node_id, r)
     async with httpx.AsyncClient(timeout=10.0) as c:
@@ -82,7 +82,7 @@ async def stop_service(node_id: str, name: str, r=Depends(deps.get)) -> dict:
     return resp.json()
 
 
-@router.post("/{node_id}/{name}/start")
+@router.post("/{node_id}/{name}/start", dependencies=[Depends(require_role("operator"))])
 async def start_service(node_id: str, name: str, r=Depends(deps.get)) -> dict:
     """重启已停服务：优先用持久化 spec；无 spec 走旧版裸指令（兼容 mock）。"""
     spec = await r.hgetall(f"{SPEC_PREFIX}{node_id}:{name}")

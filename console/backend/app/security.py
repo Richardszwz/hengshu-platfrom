@@ -1,4 +1,4 @@
-"""认证：argon2 密码校验 + JWT（HS256）。"""
+"""认证：argon2 密码校验 + JWT（HS256）+ 用户存储角色鉴权。"""
 from __future__ import annotations
 
 import time
@@ -9,6 +9,7 @@ from argon2.exceptions import VerificationError, VerifyMismatchError
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from . import deps, users_store
 from .config import settings
 
 _hasher = PasswordHasher()
@@ -39,12 +40,38 @@ def issue_token(username: str) -> dict:
 
 async def current_user(
     cred: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    r=Depends(deps.get),
 ) -> str:
+    """校验 JWT + 用户存储状态（禁用/删除即时生效）。返回用户名。"""
     if cred is None:
         raise HTTPException(401, "missing token")
     try:
         payload = jwt.decode(cred.credentials, settings.secret_key,
                              algorithms=["HS256"])
-        return str(payload["sub"])
+        username = str(payload["sub"])
     except jwt.PyJWTError:
         raise HTTPException(401, "invalid token") from None
+    user = await users_store.get_user(r, username)
+    if user is not None and user.get("enabled", "1") != "1":
+        raise HTTPException(401, "user disabled")
+    return username
+
+
+async def _role_of(r, username: str) -> str:
+    user = await users_store.get_user(r, username)
+    # 未入库（如纯 env 种子前的旧 token）按 admin 兼容
+    return (user or {}).get("role", "admin")
+
+
+def require_role(min_role: str):
+    """依赖工厂：角色不足 → 403。用法 dependencies=[Depends(require_role('operator'))]"""
+    async def _guard(
+        cred: HTTPAuthorizationCredentials | None = Depends(_bearer),
+        r=Depends(deps.get),
+    ) -> str:
+        username = await current_user(cred, r)
+        role = await _role_of(r, username)
+        if users_store.ROLE_RANK.get(role, 0) < users_store.ROLE_RANK[min_role]:
+            raise HTTPException(403, f"需要 {min_role} 角色（当前 {role}）")
+        return username
+    return _guard

@@ -10,18 +10,22 @@ export const useAuthStore = defineStore('auth', {
   state: () => {
     const token = localStorage.getItem('hs_token') || ''
     applyHeader(token)  // 刷新页面后恢复鉴权头
-    return { token }
+    return { token, username: localStorage.getItem('hs_user') || '' }
   },
   actions: {
     async login(username: string, password: string) {
       const { data } = await axios.post('/api/auth/login', { username, password })
       this.token = data.access_token
+      this.username = username
       localStorage.setItem('hs_token', this.token)
+      localStorage.setItem('hs_user', username)
       applyHeader(this.token)
     },
     logout() {
       this.token = ''
+      this.username = ''
       localStorage.removeItem('hs_token')
+      localStorage.removeItem('hs_user')
       applyHeader('')
     }
   }

@@ -10,13 +10,14 @@
         <router-link to="/nodes" :class="{ on: route.name === 'nodes' }"><span class="ico"></span>节点管理</router-link>
         <router-link to="/terminal" :class="{ on: route.name === 'terminal' }"><span class="ico"></span>Web 终端</router-link>
         <router-link to="/tenants" :class="{ on: route.name === 'tenants' }"><span class="ico"></span>租户管理</router-link>
+        <router-link to="/users" :class="{ on: route.name === 'users' }"><span class="ico"></span>用户管理</router-link>
         <router-link to="/rules" :class="{ on: route.name === 'rules' }"><span class="ico"></span>规则路由</router-link>
         <router-link to="/audit" :class="{ on: route.name === 'audit' }"><span class="ico"></span>审计日志</router-link>
         <router-link to="/settings" :class="{ on: route.name === 'settings' }"><span class="ico"></span>系统设置</router-link>
       </nav>
       <div class="side-foot">
-        <div class="avatar">R</div>
-        <div><b>admin</b><small>平台管理员 · v0.1.0</small></div>
+        <div class="avatar">{{ (auth.username || 'A')[0].toUpperCase() }}</div>
+        <div><b>{{ auth.username || 'admin' }}</b><small>控制台账户 · v0.1.0</small></div>
         <button class="logout-btn" @click="logout">退出</button>
       </div>
     </aside>

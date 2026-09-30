@@ -19,7 +19,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi import Depends
 from redis.asyncio import Redis
 
-from . import deps, hooks
+from . import deps, hooks, users_store
 from .config import settings
 from .crypto import decrypt
 from .keys import CRED_PREFIX, NODE_PREFIX
@@ -41,14 +41,22 @@ BLACKLIST = [re.compile(p, re.I) for p in os.getenv(
 MAX_LINE = 4096
 
 
-def _ws_auth(token: str | None) -> str:
+async def _ws_auth(token: str | None, r: Redis) -> str:
+    """WS 认证：JWT + 用户状态 + admin 角色（Web 终端仅 admin，方案 §3.6）。"""
     if not token:
         raise PermissionError("missing token")
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
-        return payload.get("sub", "unknown")
     except Exception as e:  # noqa: BLE001
         raise PermissionError("bad token") from e
+    sub = payload.get("sub", "unknown")
+    user = await users_store.get_user(r, sub)
+    if user is not None:
+        if user.get("enabled", "1") != "1":
+            raise PermissionError("user disabled")
+        if users_store.ROLE_RANK.get(user.get("role", "viewer"), 0) < users_store.ROLE_RANK["admin"]:
+            raise PermissionError("terminal requires admin role")
+    return sub
 
 
 async def _audit(r: Redis, level: str, msg: str) -> None:
@@ -89,8 +97,9 @@ class _Recorder:
 @router.websocket("/api/term/ws")
 async def term_ws(ws: WebSocket) -> None:
     q = ws.query_params
+    r = deps.get()
     try:
-        user = _ws_auth(q.get("token"))
+        user = await _ws_auth(q.get("token"), r)
     except PermissionError as e:
         await ws.close(code=4401, reason=str(e))
         return

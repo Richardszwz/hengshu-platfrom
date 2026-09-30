@@ -8,7 +8,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from . import deps, term
-from .api import auth, dashboard, nodes, rules, services, settings_api, tenants, audits
+from .api import auth, dashboard, nodes, rules, services, settings_api, tenants, audits, users
 from .config import settings
 
 app = FastAPI(title="衡枢 Console", version="0.1.0")
@@ -17,6 +17,11 @@ app = FastAPI(title="衡枢 Console", version="0.1.0")
 @app.on_event("startup")
 async def _startup() -> None:
     deps.init(settings.redis_url)
+    # 多用户：用户库为空时从 env 哈希种子 admin（幂等）
+    from . import users_store
+    from .api.settings_api import get_admin_hash
+    r = deps.get()
+    await users_store.seed_admin(r, await get_admin_hash(r), settings.admin_username)
 
 
 @app.on_event("shutdown")
@@ -29,7 +34,7 @@ async def healthz() -> dict:
     return {"ok": True, "service": "hengshu-console"}
 
 
-for m in (auth, nodes, services, dashboard, tenants, rules, term, audits, settings_api):
+for m in (auth, nodes, services, dashboard, tenants, rules, term, audits, settings_api, users):
     app.include_router(m.router)
 
 # 前端 SPA：打包产物由 Dockerfile 拷入 static/。

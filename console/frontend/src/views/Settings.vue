@@ -114,7 +114,7 @@ async function changePwd() {
   if (pwd.next !== pwd.confirm) { msg.pwd = '两次输入的新密码不一致'; msg.pwdOk = false; return }
   busy.value = true
   try {
-    await api.settingsChangePwd(pwd.old, pwd.next)
+    await api.changeMyPwd(pwd.old, pwd.next)
     msg.pwd = '已更新，2 秒后跳转登录页'
     msg.pwdOk = true
     setTimeout(() => { auth.logout(); router.push({ name: 'login' }) }, 2000)
