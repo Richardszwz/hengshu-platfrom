@@ -30,6 +30,12 @@ export const api = {
   // 审计：事件流 + 终端录屏
   auditsEvents: () => axios.get('/api/audits/events').then(r => r.data),
   recordings: () => axios.get('/api/term/recordings').then(r => r.data),
+  // 系统设置
+  settingsGet: () => axios.get('/api/settings').then(r => r.data),
+  settingsSetWebhook: (url: string) => axios.put('/api/settings/webhook', { url }).then(r => r.data),
+  settingsTestWebhook: () => axios.post('/api/settings/webhook/test').then(r => r.data),
+  settingsChangePwd: (old_password: string, new_password: string) =>
+    axios.post('/api/settings/password', { old_password, new_password }).then(r => r.data),
   services: () => axios.get('/api/services').then(r => r.data),
   launchService: (node: string, payload: object) =>
     axios.post(`/api/services/${node}/start`, payload).then(r => r.data),

@@ -109,3 +109,34 @@ def test_remove_online_node_rejected(client) -> None:
     assert resp.json() == {"removed": "dead-node"}
     assert asyncio.run(fake.exists("hs:node:dead-node", "hs:conn:dead-node")) == 0
     assert asyncio.run(fake.smembers("hs:model:qwen3-30b")) == {"gpu-x:8002"}
+
+
+def test_settings_webhook_and_password(client) -> None:
+    """系统设置：webhook 读写 / 改密后旧密码失效新密码生效（fakeredis 覆盖）。"""
+    r = client.get("/api/settings")
+    assert r.status_code == 200
+    assert r.json()["webhook_source"] in ("env", "redis", "none")
+
+    # webhook 保存 → redis 覆盖生效
+    r = client.put("/api/settings/webhook", json={"url": "https://hooks.example.com/x"})
+    assert r.status_code == 200
+    assert client.get("/api/settings").json()["webhook_url"] == "https://hooks.example.com/x"
+    # 非法协议拦截
+    assert client.put("/api/settings/webhook", json={"url": "ftp://x"}).status_code == 400
+
+    # 改密：先在 Redis 覆盖一个已知哈希（测试环境无 ADMIN_PASSWORD_HASH）
+    import asyncio
+    from app.security import hash_password
+    fake = app.dependency_overrides[deps.get]()
+    asyncio.run(fake.hset("hs:settings", "admin_hash", hash_password("oldpass1")))
+    # 旧密码错误 → 403
+    assert client.post("/api/settings/password", json={
+        "old_password": "wrong", "new_password": "newpass123"}).status_code == 403
+    # 正确改密 → 200
+    assert client.post("/api/settings/password", json={
+        "old_password": "oldpass1", "new_password": "newpass123"}).status_code == 200
+    # 新密码可登录、旧密码失效
+    assert client.post("/api/auth/login", json={
+        "username": "admin", "password": "newpass123"}).status_code == 200
+    assert client.post("/api/auth/login", json={
+        "username": "admin", "password": "oldpass1"}).status_code == 401

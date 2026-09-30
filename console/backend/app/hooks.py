@@ -15,16 +15,29 @@ import time
 import httpx
 
 log = logging.getLogger("hengshu.hooks")
-URL = os.getenv("HENGSHU_WEBHOOK_URL", "")
+URL_ENV = os.getenv("HENGSHU_WEBHOOK_URL", "")
+
+
+async def _resolve_url() -> str:
+    """优先级：Redis hs:settings.webhook_url（系统设置页可改）> 环境变量。"""
+    try:
+        from . import deps
+        v = await deps.get().hget("hs:settings", "webhook_url")
+        if v is not None:
+            return v
+    except Exception:  # noqa: BLE001 —— redis 不可用时回退 env
+        pass
+    return URL_ENV
 
 
 async def emit(kind: str, payload: dict) -> None:
-    if not URL:
+    url = await _resolve_url()
+    if not url:
         return
     body = {"event": kind, "ts": int(time.time()),
             "source": "hengshu-console", **payload}
     try:
         async with httpx.AsyncClient(timeout=5.0) as c:
-            await c.post(URL, json=body)
+            await c.post(url, json=body)
     except Exception as e:  # noqa: BLE001 —— 通知失败不能影响主流程
-        log.warning("webhook %s → %s failed: %s", kind, URL, e)
+        log.warning("webhook %s → %s failed: %s", kind, url, e)

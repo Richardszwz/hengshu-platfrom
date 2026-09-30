@@ -10,7 +10,8 @@ const router = createRouter({
     { path: '/terminal', name: 'terminal', component: () => import('../views/Terminal.vue') },
     { path: '/tenants', name: 'tenants', component: () => import('../views/Tenants.vue') },
     { path: '/rules', name: 'rules', component: () => import('../views/Rules.vue') },
-    { path: '/audit', name: 'audit', component: () => import('../views/Audit.vue') }
+    { path: '/audit', name: 'audit', component: () => import('../views/Audit.vue') },
+    { path: '/settings', name: 'settings', component: () => import('../views/Settings.vue') }
   ]
 })
 

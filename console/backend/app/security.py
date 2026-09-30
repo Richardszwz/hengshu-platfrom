@@ -15,11 +15,16 @@ _hasher = PasswordHasher()
 _bearer = HTTPBearer(auto_error=False)
 
 
-def verify_password(password: str) -> bool:
-    if not settings.admin_password_hash:
+def hash_password(password: str) -> str:
+    return _hasher.hash(password)
+
+
+def verify_password(password: str, hash_str: str | None = None) -> bool:
+    h = hash_str or settings.admin_password_hash
+    if not h:
         return False
     try:
-        return _hasher.verify(settings.admin_password_hash, password)
+        return _hasher.verify(h, password)
     except (VerifyMismatchError, VerificationError, ValueError):
         return False
 

@@ -448,7 +448,9 @@ function toggleLive() {
 /* ---------- 生命周期 ---------- */
 onMounted(() => {
   refresh()
-  timer = window.setInterval(refresh, 3000)
+  // 刷新间隔可在「系统设置 → 显示偏好」调整
+  const iv = parseInt(localStorage.getItem('hs_refresh_ms') || '3000')
+  timer = window.setInterval(refresh, isNaN(iv) ? 3000 : iv)
   window.addEventListener('resize', () => charts.forEach(c => c.resize()))
 })
 onUnmounted(() => {
