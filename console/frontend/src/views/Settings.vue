@@ -40,6 +40,52 @@
       <p v-if="msg.pwd" class="msg" :class="msg.pwdOk ? 'ok' : 'bad'">{{ msg.pwd }}</p>
     </div>
 
+    <!-- 用户管理（admin；非 admin 后端 403，前端自动隐藏） -->
+    <div class="panel" v-if="usersVisible">
+      <div class="p-head">
+        <h3>用户管理</h3>
+        <span class="sub">viewer 只读 · operator 运维节点/服务/规则/租户 · admin 全部</span>
+      </div>
+      <form class="row" @submit.prevent="createUser">
+        <input v-model.trim="nu.username" class="inp" placeholder="用户名（字母/数字/_/-）" required />
+        <input v-model="nu.password" class="inp" type="password" placeholder="初始密码（≥6 位）" required />
+        <select v-model="nu.role" class="inp sel">
+          <option value="viewer">viewer 只读</option>
+          <option value="operator">operator 运维</option>
+          <option value="admin">admin 管理员</option>
+        </select>
+        <button class="btn" type="submit" :disabled="busy">创建用户</button>
+      </form>
+      <p v-if="msg.users" class="msg bad">{{ msg.users }}</p>
+      <table class="tbl">
+        <thead>
+          <tr><th>用户名</th><th>角色</th><th>状态</th><th>创建时间</th><th>最近登录</th><th style="width:170px"></th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="u in users" :key="u.username">
+            <td class="mono" style="color:var(--cyan)">{{ u.username }}</td>
+            <td>
+              <select class="mini-sel" :value="u.role" :disabled="u.username === me"
+                      @change="setRole(u, ($event.target as HTMLSelectElement).value)">
+                <option value="viewer">viewer</option>
+                <option value="operator">operator</option>
+                <option value="admin">admin</option>
+              </select>
+            </td>
+            <td><span :class="u.enabled ? 'ok-t' : 'bad-t'">{{ u.enabled ? '启用' : '禁用' }}</span></td>
+            <td class="mono dim">{{ u.created ? new Date(u.created * 1000).toLocaleString() : '-' }}</td>
+            <td class="mono dim">{{ u.last_login ? new Date(u.last_login * 1000).toLocaleString() : '从未' }}</td>
+            <td>
+              <button class="mini-btn" :disabled="u.username === me" @click="toggleUser(u)">
+                {{ u.enabled ? '禁用' : '启用' }}
+              </button>
+              <button class="mini-btn danger" :disabled="u.username === me" @click="delUser(u)">删除</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
     <!-- 显示偏好 -->
     <div class="panel">
       <div class="p-head"><h3>显示偏好</h3><span class="sub">保存在本浏览器</span></div>
@@ -68,11 +114,52 @@ const info = ref<any>(null)
 const webhookUrl = ref('')
 const webhookSource = ref('none')
 const busy = ref(false)
-const msg = reactive({ webhook: '', webhookOk: false, pwd: '', pwdOk: false })
+const msg = reactive({ webhook: '', webhookOk: false, pwd: '', pwdOk: false, users: '' })
 const pwd = reactive({ old: '', next: '', confirm: '' })
 const refreshMs = ref(parseInt(localStorage.getItem('hs_refresh_ms') || '4000'))
 const auth = useAuthStore()
 const router = useRouter()
+const me = auth.username || 'admin'
+
+/* ---------- 用户管理（admin） ---------- */
+const users = ref<any[]>([])
+const usersVisible = ref(false)
+const nu = reactive({ username: '', password: '', role: 'viewer' })
+
+async function loadUsers() {
+  try {
+    users.value = (await api.usersList()).users
+    usersVisible.value = true
+  } catch { usersVisible.value = false }  // 非 admin 隐藏
+}
+
+async function createUser() {
+  msg.users = ''
+  busy.value = true
+  try {
+    await api.usersCreate(nu.username, nu.password, nu.role)
+    nu.username = ''; nu.password = ''; nu.role = 'viewer'
+    await loadUsers()
+  } catch (e: any) {
+    msg.users = e?.response?.data?.detail || '创建失败'
+  } finally { busy.value = false }
+}
+
+async function setRole(u: any, role: string) {
+  try { await api.usersUpdate(u.username, { role }); await loadUsers() }
+  catch (e: any) { msg.users = e?.response?.data?.detail || '更新失败' }
+}
+
+async function toggleUser(u: any) {
+  try { await api.usersUpdate(u.username, { enabled: !u.enabled }); await loadUsers() }
+  catch (e: any) { msg.users = e?.response?.data?.detail || '操作失败' }
+}
+
+async function delUser(u: any) {
+  if (!confirm(`删除用户 ${u.username}？其登录态立即失效`)) return
+  try { await api.usersDelete(u.username); await loadUsers() }
+  catch (e: any) { msg.users = e?.response?.data?.detail || '删除失败' }
+}
 
 const sourceText = computed(() =>
   ({ redis: '页面设置（覆盖环境变量）', env: '环境变量', none: '未配置' } as any)[webhookSource.value] || webhookSource.value)
@@ -128,7 +215,7 @@ function saveRefresh() {
   localStorage.setItem('hs_refresh_ms', String(refreshMs.value))
 }
 
-onMounted(load)
+onMounted(() => { load(); loadUsers() })
 </script>
 
 <style scoped>
@@ -157,4 +244,13 @@ onMounted(load)
 .msg { margin: 0 14px 12px; font-size: 12px; }
 .msg.ok { color: var(--green); } .msg.bad { color: var(--red); }
 .mono { font-family: var(--mono); }
+/* 用户管理表 */
+.tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+.tbl th { text-align: left; padding: 8px 14px; color: var(--txt-dim); border-bottom: 1px solid var(--line); font-weight: 500; }
+.tbl td { padding: 8px 14px; border-bottom: 1px solid var(--line); }
+.mini-sel { background: rgba(0, 30, 50, .6); border: 1px solid var(--line); color: var(--txt); padding: 3px 6px; font-size: 11px; }
+.mini-btn { background: transparent; border: 1px solid var(--line); color: var(--txt-dim); font-size: 11px; padding: 3px 10px; cursor: pointer; margin-right: 6px; }
+.mini-btn.danger:hover { color: var(--red); border-color: rgba(255, 77, 90, .4); }
+.mini-btn:disabled { opacity: .35; cursor: not-allowed; }
+.ok-t { color: var(--green); } .bad-t { color: var(--red); }
 </style>

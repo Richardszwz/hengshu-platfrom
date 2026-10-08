@@ -32,7 +32,7 @@ cd console/frontend && npm run dev   # 前端热更（可选）
 
 登录：admin / `hengshu-dev`（`ADMIN_PASSWORD_HASH` 由 `scripts/gen_admin_hash.py` 生成）。
 
-多用户：「用户管理」页（admin 专属）可建账户。角色：`viewer` 只读 / `operator` 运维（节点·服务·规则·租户变更）/ `admin` 全部（含用户·设置·Web 终端）。用户存 Redis `hs:user:*`，首次启动自动把 env admin 种子入库；禁用/删除即时生效；改密在「系统设置」（写入用户库）。
+多用户：「系统设置 → 用户管理」（admin 可见）可建账户。角色：`viewer` 只读 / `operator` 运维（节点·服务·规则·租户变更）/ `admin` 全部（含用户·设置·Web 终端）。用户存 Redis `hs:user:*`，首次启动自动把 env admin 种子入库；禁用/删除即时生效；改密在「系统设置 → 修改管理员密码」（写入用户库）。
 
 ## 添加节点
 
