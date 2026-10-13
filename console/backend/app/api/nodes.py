@@ -144,7 +144,7 @@ async def stop_agent(node_id: str, r=Depends(deps.get)) -> dict:
     if not addr:
         raise HTTPException(400, "该节点 Agent 为旧版（无 agent_addr），请先用「重装」升级镜像")
     try:
-        async with httpx.AsyncClient(timeout=5.0) as c:
+        async with httpx.AsyncClient(timeout=5.0, trust_env=False) as c:
             resp = await c.post(f"{addr}/shutdown")
         out = resp.json()
     except Exception as e:  # noqa: BLE001 —— Agent 自杀可能秒断连，视为已停止

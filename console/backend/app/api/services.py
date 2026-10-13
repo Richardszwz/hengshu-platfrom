@@ -65,8 +65,11 @@ async def _agent_addr(node_id: str, r) -> str:
 async def launch_service(node_id: str, req: StartServiceReq, r=Depends(deps.get)) -> dict:
     """启动新服务（完整 StartRequest 下发 Agent），并持久化 spec 供重启复用。"""
     addr = await _agent_addr(node_id, r)
-    async with httpx.AsyncClient(timeout=120.0) as c:
-        resp = await c.post(f"{addr}/services/start", json=req.model_dump())
+    try:
+        async with httpx.AsyncClient(timeout=120.0, trust_env=False) as c:
+            resp = await c.post(f"{addr}/services/start", json=req.model_dump())
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"无法连接节点 Agent（{addr}）：{type(e).__name__} {e}") from e
     if resp.status_code != 200:
         raise HTTPException(resp.status_code, resp.text[:200])
     import json as _json
@@ -81,7 +84,7 @@ async def launch_service(node_id: str, req: StartServiceReq, r=Depends(deps.get)
 @router.post("/{node_id}/{name}/stop", dependencies=[Depends(require_role("operator"))])
 async def stop_service(node_id: str, name: str, r=Depends(deps.get)) -> dict:
     addr = await _agent_addr(node_id, r)
-    async with httpx.AsyncClient(timeout=10.0) as c:
+    async with httpx.AsyncClient(timeout=10.0, trust_env=False) as c:
         resp = await c.post(f"{addr}/services/stop/{name}")
     return resp.json()
 
@@ -91,7 +94,7 @@ async def start_service(node_id: str, name: str, r=Depends(deps.get)) -> dict:
     """重启已停服务：优先用持久化 spec；无 spec 走旧版裸指令（兼容 mock）。"""
     spec = await r.hgetall(f"{SPEC_PREFIX}{node_id}:{name}")
     addr = await _agent_addr(node_id, r)
-    async with httpx.AsyncClient(timeout=120.0) as c:
+    async with httpx.AsyncClient(timeout=120.0, trust_env=False) as c:
         if spec:
             import json as _json
             payload = {
@@ -113,6 +116,6 @@ async def start_service(node_id: str, name: str, r=Depends(deps.get)) -> dict:
 async def service_logs(node_id: str, name: str, tail: int = 100,
                        r=Depends(deps.get)) -> dict:
     addr = await _agent_addr(node_id, r)
-    async with httpx.AsyncClient(timeout=10.0) as c:
+    async with httpx.AsyncClient(timeout=10.0, trust_env=False) as c:
         resp = await c.get(f"{addr}/services/{name}/logs", params={"tail": tail})
     return resp.json()
