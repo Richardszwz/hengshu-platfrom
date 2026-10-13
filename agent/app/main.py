@@ -154,8 +154,19 @@ async def heartbeat_loop() -> None:
     r = redis()
     ttl = settings.heartbeat_interval * 5
     node_key = f"hs:node:{settings.node_id}"
+    tomb_key = f"hs:node_del:{settings.node_id}"
     while True:
         try:
+            # 删除墓碑：控制台删节点时下发，Agent 见到即自杀（容器删自身防 restart 拉起）
+            if await r.get(tomb_key):
+                logging.getLogger("hengshu.agent").warning("tombstone received, self-destruct")
+                import shutil
+                if shutil.which("docker"):
+                    p = await asyncio.create_subprocess_exec(
+                        "docker", "rm", "-f",
+                        os.getenv("AGENT_CONTAINER_NAME", "hengshu-agent"))
+                    await p.wait()
+                os._exit(0)
             sysm = gpu_sample()
             base = {
                 "hostname": os.getenv("NODE_HOSTNAME") or socket.gethostname(),

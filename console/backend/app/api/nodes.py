@@ -30,10 +30,13 @@ async def list_nodes(r=Depends(deps.get)) -> dict:
     nodes = []
     seen: set[str] = set()
     for k in keys:
+        iid = k.removeprefix(NODE_PREFIX)
+        # 墓碑节点不展示（已删除；旧版 Agent 可能仍在瞎写心跳）
+        if await r.get(f"hs:node_del:{iid}"):
+            continue
         h = await r.hgetall(k)
         if not h:
             continue
-        iid = k.removeprefix(NODE_PREFIX)
         seen.add(iid)
         insts = await r.keys(f"{INST_PREFIX}{iid}:*")
         nodes.append({
@@ -48,6 +51,8 @@ async def list_nodes(r=Depends(deps.get)) -> dict:
     for ck in await r.keys("hs:conn:*"):
         nid = ck.removeprefix("hs:conn:")
         if nid in seen:
+            continue
+        if await r.get(f"hs:node_del:{nid}"):  # 墓碑节点不展示
             continue
         conn = await r.hgetall(ck)
         nodes.append({
@@ -68,6 +73,7 @@ async def add_node(req: NodeAddReq, r=Depends(deps.get)) -> dict:
         raise HTTPException(400, "password or private_key required")
     blob = encrypt(req.private_key or req.password or "")
     await r.set(f"{CRED_PREFIX}{req.node_id}", blob)
+    await r.delete(f"hs:node_del:{req.node_id}")  # 重新添加 → 清墓碑
     # 连接元数据（Web 终端/重装复用；无密钥明文）
     await r.hset(f"hs:conn:{req.node_id}", mapping={
         "host": req.hostname, "port": str(req.ssh_port), "username": req.username})
@@ -91,6 +97,7 @@ async def install_node(node_id: str, req: NodeAddReq, r=Depends(deps.get)) -> di
                                      "username": req.username or conn.get("username", "")})
     if not req.hostname or not req.username:
         raise HTTPException(400, "缺少连接信息且无存档，请完整填写 IP/SSH 用户")
+    await r.delete(f"hs:node_del:{node_id}")  # 重装 → 清墓碑
     if not req.password and not req.private_key:
         # 重装场景：请求未带凭证时回退使用已存加密凭证
         blob = await r.get(f"{CRED_PREFIX}{node_id}")
@@ -144,11 +151,9 @@ async def stop_agent(node_id: str, r=Depends(deps.get)) -> dict:
 
 @router.delete("/{node_id}", dependencies=[Depends(require_role("operator"))])
 async def remove_node(node_id: str, r=Depends(deps.get)) -> dict:
-    # 心跳仍活跃的节点不可删除——Agent 每周期重写心跳，删了也会"复活"
+    """删除节点：在线 → 写墓碑（Agent 下一拍心跳见到即自杀并删容器）；离线 → 直接清登记。"""
     h = await r.hgetall(f"{NODE_PREFIX}{node_id}")
-    if h and int(h.get("last_seen", "0")) > time.time() - 15:
-        raise HTTPException(409, f"节点 {node_id} 在线（心跳活跃），无法删除；"
-                                  "如需移除请先停止目标机上的 hengshu-agent 容器")
+    online = bool(h) and int(h.get("last_seen", "0")) > time.time() - 15
     await r.delete(f"{NODE_PREFIX}{node_id}", f"{CRED_PREFIX}{node_id}",
                    f"hs:conn:{node_id}")
     # 清理该节点在模型集合里的实例登记（实例 hash 本身随 TTL 过期）
@@ -156,4 +161,12 @@ async def remove_node(node_id: str, r=Depends(deps.get)) -> dict:
         for iid in await r.smembers(mk):
             if iid.startswith(f"{node_id}:"):
                 await r.srem(mk, iid)
-    return {"removed": node_id}
+    if online:
+        # 墓碑：Agent（新版）下一拍读到即自杀；列表层同时过滤墓碑节点，
+        # 旧版 Agent 即使瞎写也不会在控制台复活。墓碑持久，重新添加/安装时清除。
+        await r.set(f"hs:node_del:{node_id}", "1")
+        return {"removed": node_id, "agent_notified": True,
+                "msg": "节点在线：已下发自杀墓碑并隐藏，Agent（新版）数秒内自停"}
+    # 离线也写墓碑（防失联中的旧 Agent 突然恢复心跳复活）
+    await r.set(f"hs:node_del:{node_id}", "1")
+    return {"removed": node_id, "agent_notified": False}

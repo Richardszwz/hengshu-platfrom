@@ -166,9 +166,10 @@ async function submit(install: boolean) {
 }
 
 async function remove(n: any) {
-  if (!confirm(`删除节点 ${n.node_id}？（仅删除登记与凭证，目标机 Agent 容器需手动清理）`)) return
+  if (!confirm(`删除节点 ${n.node_id}？${n.status === 'online' ? '在线节点将收到自杀墓碑，Agent 自停后不再出现' : ''}`)) return
   try {
-    await api.removeNode(n.node_id)
+    const d = await api.removeNode(n.node_id)
+    if (d.agent_notified) alert(d.msg)
   } catch (e: any) {
     const msg = e?.response?.data?.detail || e?.message || '删除失败'
     alert(msg)

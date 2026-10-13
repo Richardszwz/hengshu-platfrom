@@ -87,110 +87,30 @@ def test_recorder_v2_format(tmp_path) -> None:
     assert json.loads(lines[2])[2] == "ls\r"
 
 
-def test_remove_online_node_rejected(client) -> None:
-    """在线节点（心跳新鲜）删除 → 409，避免 Agent 重写心跳导致'复活'。"""
+def test_remove_online_node_sends_tombstone(client) -> None:
+    """在线节点删除 → 200 + 墓碑写入（Agent 下拍自杀）；离线节点 → 直接清登记。"""
     import asyncio
     import time as _t
+    fake = app.dependency_overrides[deps.get]()
 
-    async def setup():
-        fake = fakeredis.aioredis.FakeRedis(decode_responses=True)
-        app.dependency_overrides[deps.get] = lambda: fake
-        # 在线节点：last_seen 当前时间
-        await fake.hset("hs:node:live-node", mapping={"last_seen": str(int(_t.time()))})
-        return fake
+    # 在线节点
+    asyncio.run(fake.hset("hs:node:live-node", mapping={"last_seen": str(int(_t.time()))}))
+    r = client.delete("/api/nodes/live-node")
+    assert r.status_code == 200
+    assert r.json()["agent_notified"] is True
+    assert asyncio.run(fake.get("hs:node_del:live-node")) == "1"
+    assert asyncio.run(fake.exists("hs:node:live-node")) == 0
 
-    fake = asyncio.run(setup())
-    resp = client.delete("/api/nodes/live-node")
-    assert resp.status_code == 409
-    assert "在线" in resp.json()["detail"]
-
-    async def setup_dead():
-        past = str(int(_t.time()) - 100)
-        await fake.hset("hs:node:dead-node", mapping={"last_seen": past})
-        await fake.hset("hs:conn:dead-node", mapping={"host": "1.1.1.1", "port": "22", "username": "u"})
-        await fake.sadd("hs:model:qwen3-30b", "dead-node:8001", "gpu-x:8002")
-
-    asyncio.run(setup_dead())
-    resp = client.delete("/api/nodes/dead-node")
-    assert resp.status_code == 200
-    assert resp.json() == {"removed": "dead-node"}
+    # 离线节点（带 conn/模型集合残留）
+    past = str(int(_t.time()) - 100)
+    asyncio.run(fake.hset("hs:node:dead-node", mapping={"last_seen": past}))
+    asyncio.run(fake.hset("hs:conn:dead-node", mapping={"host": "1.1.1.1", "port": "22", "username": "u"}))
+    asyncio.run(fake.sadd("hs:model:qwen3-30b", "dead-node:8001", "gpu-x:8002"))
+    r = client.delete("/api/nodes/dead-node")
+    assert r.status_code == 200
+    assert r.json()["agent_notified"] is False
     assert asyncio.run(fake.exists("hs:node:dead-node", "hs:conn:dead-node")) == 0
     assert asyncio.run(fake.smembers("hs:model:qwen3-30b")) == {"gpu-x:8002"}
-
-
-def test_settings_webhook_and_password(client) -> None:
-    """系统设置：webhook 读写 / 改密后旧密码失效新密码生效（fakeredis 覆盖）。"""
-    r = client.get("/api/settings")
-    assert r.status_code == 200
-    assert r.json()["webhook_source"] in ("env", "redis", "none")
-
-    # webhook 保存 → redis 覆盖生效
-    r = client.put("/api/settings/webhook", json={"url": "https://hooks.example.com/x"})
-    assert r.status_code == 200
-    assert client.get("/api/settings").json()["webhook_url"] == "https://hooks.example.com/x"
-    # 非法协议拦截
-    assert client.put("/api/settings/webhook", json={"url": "ftp://x"}).status_code == 400
-
-    # 改密：种子用户 admin 的密码是 x12345（fixture），走 /api/users/me/password
-    assert client.post("/api/users/me/password", json={
-        "old_password": "wrong", "new_password": "newpass123"}).status_code == 403
-    assert client.post("/api/users/me/password", json={
-        "old_password": "x12345", "new_password": "newpass123"}).status_code == 200
-    # 新密码可登录、旧密码失效
-    assert client.post("/api/auth/login", json={
-        "username": "admin", "password": "newpass123"}).status_code == 200
-    assert client.post("/api/auth/login", json={
-        "username": "admin", "password": "x12345"}).status_code == 401
-
-
-def test_users_crud_and_role_guard(client) -> None:
-    """用户管理：CRUD + 角色越权 403 + 禁用即失效 + 不能删/改自己。"""
-    import asyncio
-    from app.security import hash_password, issue_token
-    fake = app.dependency_overrides[deps.get]()
-
-    # 列表：初始含 admin
-    users = client.get("/api/users").json()["users"]
-    assert [u["username"] for u in users] == ["admin"] and users[0]["role"] == "admin"
-
-    # 创建 viewer
-    r = client.post("/api/users", json={"username": "v1", "password": "view123", "role": "viewer"})
-    assert r.status_code == 200
-    assert client.post("/api/users", json={"username": "v1", "password": "view123", "role": "viewer"}).status_code == 409
-    assert client.post("/api/users", json={"username": "bad name!", "password": "view123", "role": "viewer"}).status_code == 400
-
-    # viewer 登录 → 能读（GET 走 current_user override 之外的真实路径这里直接发 token）
-    vt = issue_token("v1")["access_token"]
-    assert client.get("/api/dashboard/summary", headers={"Authorization": f"Bearer {vt}"}).status_code == 200
-    # viewer 改租户 → 403（operator+）
-    assert client.post("/api/tenants", headers={"Authorization": f"Bearer {vt}"},
-                       json={"name": "t", "qps_limit": 5}).status_code == 403
-    # viewer 改设置 → 403（admin）
-    assert client.get("/api/settings", headers={"Authorization": f"Bearer {vt}"}).status_code == 403
-
-    # 禁用 v1 → 其 token 立即 401
-    assert client.put("/api/users/v1", json={"enabled": False}).status_code == 200
-    assert client.get("/api/dashboard/summary", headers={"Authorization": f"Bearer {vt}"}).status_code == 401
-
-    # 自残保护
-    assert client.delete("/api/users/admin").status_code == 400
-    assert client.put("/api/users/admin", json={"role": "viewer"}).status_code == 400
-
-    # 删除
-    assert client.delete("/api/users/v1").status_code == 200
-    assert client.delete("/api/users/v1").status_code == 404
-
-
-def test_stop_agent_guards(client) -> None:
-    """远程停止 Agent：离线节点 404；旧版 Agent（无 agent_addr）400 指引重装。"""
-    import asyncio
-    import time as _t
-    fake = app.dependency_overrides[deps.get]()
-    asyncio.run(fake.hset("hs:node:S9", mapping={"last_seen": str(int(_t.time()))}))
-
-    r = client.post("/api/nodes/S9/stop-agent")
-    assert r.status_code == 400 and "重装" in r.json()["detail"]
-    assert client.post("/api/nodes/nope/stop-agent").status_code == 404
 
 
 def test_reinstall_fallback_conn_and_cred(client, monkeypatch) -> None:
@@ -218,3 +138,86 @@ def test_reinstall_fallback_conn_and_cred(client, monkeypatch) -> None:
     # 无存档节点 → 400 明确指引
     r2 = client.post("/api/nodes/NOPE/install", json={"node_id": "NOPE"})
     assert r2.status_code == 400
+
+
+def test_settings_webhook_and_password(client) -> None:
+    """系统设置：webhook 读写 / 改密后旧密码失效新密码生效。"""
+    r = client.get("/api/settings")
+    assert r.status_code == 200
+    assert r.json()["webhook_source"] in ("env", "redis", "none")
+
+    r = client.put("/api/settings/webhook", json={"url": "https://hooks.example.com/x"})
+    assert r.status_code == 200
+    assert client.get("/api/settings").json()["webhook_url"] == "https://hooks.example.com/x"
+    assert client.put("/api/settings/webhook", json={"url": "ftp://x"}).status_code == 400
+
+    # 改密（fixture 种子 admin 密码 x12345），走用户库端点
+    assert client.post("/api/users/me/password", json={
+        "old_password": "wrong", "new_password": "newpass123"}).status_code == 403
+    assert client.post("/api/users/me/password", json={
+        "old_password": "x12345", "new_password": "newpass123"}).status_code == 200
+    assert client.post("/api/auth/login", json={
+        "username": "admin", "password": "newpass123"}).status_code == 200
+    assert client.post("/api/auth/login", json={
+        "username": "admin", "password": "x12345"}).status_code == 401
+
+
+def test_users_crud_and_role_guard(client) -> None:
+    """用户管理：CRUD + 角色越权 403 + 禁用即失效 + 不能删/改自己。"""
+    from app.security import issue_token
+
+    users = client.get("/api/users").json()["users"]
+    assert [u["username"] for u in users] == ["admin"] and users[0]["role"] == "admin"
+
+    r = client.post("/api/users", json={"username": "v1", "password": "view123", "role": "viewer"})
+    assert r.status_code == 200
+    assert client.post("/api/users", json={"username": "v1", "password": "view123", "role": "viewer"}).status_code == 409
+    assert client.post("/api/users", json={"username": "bad name!", "password": "view123", "role": "viewer"}).status_code == 400
+
+    vt = issue_token("v1")["access_token"]
+    assert client.get("/api/dashboard/summary", headers={"Authorization": f"Bearer {vt}"}).status_code == 200
+    assert client.post("/api/tenants", headers={"Authorization": f"Bearer {vt}"},
+                       json={"name": "t", "qps_limit": 5}).status_code == 403
+    assert client.get("/api/settings", headers={"Authorization": f"Bearer {vt}"}).status_code == 403
+
+    assert client.put("/api/users/v1", json={"enabled": False}).status_code == 200
+    assert client.get("/api/dashboard/summary", headers={"Authorization": f"Bearer {vt}"}).status_code == 401
+
+    assert client.delete("/api/users/admin").status_code == 400
+    assert client.put("/api/users/admin", json={"role": "viewer"}).status_code == 400
+
+    assert client.delete("/api/users/v1").status_code == 200
+    assert client.delete("/api/users/v1").status_code == 404
+
+
+def test_stop_agent_guards(client) -> None:
+    """远程停止 Agent：离线节点 404；旧版 Agent（无 agent_addr）400 指引重装。"""
+    import asyncio
+    import time as _t
+    fake = app.dependency_overrides[deps.get]()
+    asyncio.run(fake.hset("hs:node:S9", mapping={"last_seen": str(int(_t.time()))}))
+
+    r = client.post("/api/nodes/S9/stop-agent")
+    assert r.status_code == 400 and "重装" in r.json()["detail"]
+    assert client.post("/api/nodes/nope/stop-agent").status_code == 404
+
+
+def test_tombstone_hides_and_add_clears(client) -> None:
+    """墓碑节点从列表隐藏；重新添加清除墓碑。"""
+    import asyncio
+    import time as _t
+    fake = app.dependency_overrides[deps.get]()
+    asyncio.run(fake.hset("hs:node:ghost", mapping={"last_seen": str(int(_t.time()))}))
+
+    # 删除（在线）→ 墓碑 + 列表隐藏
+    r = client.delete("/api/nodes/ghost")
+    assert r.json()["agent_notified"] is True
+    assert all(n["node_id"] != "ghost" for n in client.get("/api/nodes").json()["nodes"])
+    # 心跳复活也不显示
+    asyncio.run(fake.hset("hs:node:ghost", mapping={"last_seen": str(int(_t.time()))}))
+    assert all(n["node_id"] != "ghost" for n in client.get("/api/nodes").json()["nodes"])
+    # 重新添加 → 墓碑清除 → 可见
+    r = client.post("/api/nodes", json={"node_id": "ghost", "hostname": "1.2.3.4",
+                                        "username": "u", "password": "p123456"})
+    assert r.status_code == 200
+    assert asyncio.run(fake.get("hs:node_del:ghost")) is None
