@@ -137,6 +137,10 @@ async def stop_agent(node_id: str, r=Depends(deps.get)) -> dict:
     if not h:
         raise HTTPException(404, "node not online")
     addr = h.get("agent_addr")
+    # 优先 hs:conn 的 SSH 主机地址（LAN 可达）；agent_addr 可能是容器网桥 IP
+    conn = await r.hgetall(f"hs:conn:{node_id}")
+    if conn.get("host"):
+        addr = f"http://{conn['host']}:9100"
     if not addr:
         raise HTTPException(400, "该节点 Agent 为旧版（无 agent_addr），请先用「重装」升级镜像")
     try:

@@ -132,6 +132,8 @@ async def install(r: aioredis.Redis, *, node_id: str, host: str, ssh_port: int,
             cmd = (
                 f"{docker_cmd} run -d --name hengshu-agent --restart unless-stopped "
                 f"-e REDIS_URL='{redis_advertise}' -e NODE_ID='{node_id}' "
+                # 宣告地址 = SSH 目标地址（控制台/Router 经此回连；容器内网桥 IP 不可达）
+                f"-e AGENT_ADVERTISE_HOST='{host}' "
                 "-e AGENT_PORT=9100 -p 9100:9100 "
                 "-v /var/run/docker.sock:/var/run/docker.sock "
                 "-v hengshu-agent-data:/data "

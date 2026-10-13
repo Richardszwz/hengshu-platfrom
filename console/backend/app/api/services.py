@@ -54,6 +54,10 @@ async def _agent_addr(node_id: str, r) -> str:
     h = await r.hgetall(f"{NODE_PREFIX}{node_id}")
     if not h:
         raise HTTPException(404, "node offline")
+    # 优先 hs:conn 的 SSH 主机地址（LAN 可达）；agent_addr 可能是容器网桥 IP
+    conn = await r.hgetall(f"hs:conn:{node_id}")
+    if conn.get("host"):
+        return f"http://{conn['host']}:9100"
     return h.get("agent_addr", f"http://{node_id}:9100")
 
 
