@@ -56,8 +56,10 @@ async def summary(r=Depends(deps.get)) -> dict:
     agent_addrs: dict[str, str] = {}
     node_gpus: dict[str, str] = {}
     for k in node_keys:
-        h = await r.hgetall(k)
         nid = k.removeprefix(NODE_PREFIX)
+        if await r.get(f"hs:node_del:{nid}"):  # 墓碑节点不计入（已删除，旧 Agent 可能仍在写）
+            continue
+        h = await r.hgetall(k)
         if h and int(h.get("last_seen", "0")) > now - 15:
             nodes_online += 1
         if h:
@@ -88,7 +90,7 @@ async def summary(r=Depends(deps.get)) -> dict:
                        "text": d.get("msg") or d.get("text", "")})
 
     return {
-        "nodes_total": len(node_keys),
+        "nodes_total": len(agent_addrs),  # 墓碑过滤后的真实节点数
         "nodes_online": nodes_online,
         "services_total": len(insts),
         "services_running": len(running),
