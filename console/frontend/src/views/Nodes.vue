@@ -62,6 +62,9 @@
               <td class="dim">{{ fmtAgo(n.last_seen) }}</td>
               <td>
                 <button v-if="n.status === 'online'" class="op go" @click="openLaunch(n)">启动服务</button>
+                <button class="op" @click="reinstall(n)" :disabled="reinstalling === n.node_id">
+                  {{ reinstalling === n.node_id ? '重装中…' : '重装' }}
+                </button>
                 <button v-if="n.status === 'online'" class="op warn" @click="stopAgent(n)">停止Agent</button>
                 <button class="op danger" @click="remove(n)">删除</button>
               </td>
@@ -180,6 +183,27 @@ async function stopAgent(n: any) {
     alert(`已下发停止指令：${d.note || d.container || 'OK'}\n约 15 秒后节点转离线。`)
   } catch (e: any) {
     alert(e?.response?.data?.detail || e?.message || '停止失败')
+  }
+  refresh()
+}
+
+/* ---------- 重装（复用已存连接信息+凭证，后端回退） ---------- */
+const reinstalling = ref('')
+
+async function reinstall(n: any) {
+  if (!confirm(`重装 ${n.node_id}？将停掉旧 Agent 容器并用 dist/ 最新镜像重建（复用已存凭证，无需重填密码）`)) return
+  reinstalling.value = n.node_id
+  try {
+    const d = await api.installNode(n.node_id, { node_id: n.node_id })
+    if (d.status === 'ERR' || d.error) {
+      alert(`重装失败：${d.msg || d.error}`)
+    } else {
+      alert('重装已下发，等待节点心跳回来（约 30 秒）')
+    }
+  } catch (e: any) {
+    alert(e?.response?.data?.detail || e?.message || '重装失败')
+  } finally {
+    reinstalling.value = ''
   }
   refresh()
 }

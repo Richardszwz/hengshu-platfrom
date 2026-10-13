@@ -17,9 +17,9 @@ router = APIRouter(prefix="/api/nodes", tags=["nodes"], dependencies=[Depends(cu
 
 class NodeAddReq(BaseModel):
     node_id: str = Field(min_length=1, max_length=64)
-    hostname: str
+    hostname: str = ""            # 重装可留空 → 回退 hs:conn 已存连接信息
     ssh_port: int = 22
-    username: str
+    username: str = ""
     password: str | None = None
     private_key: str | None = None
 
@@ -83,6 +83,14 @@ async def install_node(node_id: str, req: NodeAddReq, r=Depends(deps.get)) -> di
 
     if req.node_id != node_id:
         raise HTTPException(400, "node_id mismatch")
+    # 重装捷径：请求缺连接信息/凭证时回退已存值（hs:conn / hs:cred）
+    conn = await r.hgetall(f"hs:conn:{node_id}")
+    if not req.hostname and conn.get("host"):
+        req = req.model_copy(update={"hostname": conn["host"],
+                                     "ssh_port": int(conn.get("port", "22")),
+                                     "username": req.username or conn.get("username", "")})
+    if not req.hostname or not req.username:
+        raise HTTPException(400, "缺少连接信息且无存档，请完整填写 IP/SSH 用户")
     if not req.password and not req.private_key:
         # 重装场景：请求未带凭证时回退使用已存加密凭证
         blob = await r.get(f"{CRED_PREFIX}{node_id}")
