@@ -223,8 +223,13 @@ function openLaunch(n: any) {
 
 async function submitLaunch() {
   launchError.value = ''
-  if (!launch.node || !launch.name || !launch.start_cmd || !launch.port) {
-    launchError.value = '名称/命令/端口必填'
+  const missing: string[] = []
+  if (!launch.node) missing.push('目标节点')
+  if (!launch.name) missing.push('服务/模型名')
+  if (!launch.start_cmd) missing.push('启动命令')
+  if (!launch.port) missing.push('服务端口')
+  if (missing.length) {
+    launchError.value = '请填写：' + missing.join('、')
     return
   }
   const env: Record<string, string> = {}
