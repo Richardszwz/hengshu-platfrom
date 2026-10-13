@@ -102,21 +102,56 @@ async def healthz() -> dict:
     return {"ok": True, "node": settings.node_id, "arch": __import__("platform").machine()}
 
 
+_INFLIGHT: set[str] = set()
+
+
+async def _start_bg(req: StartRequest) -> None:
+    """后台执行：拉镜像（可达数分钟）→ 起容器 → 登记实例。失败写事件流。"""
+    try:
+        result = await ctl.start(req)
+        inst = next((x for x in INSTANCES if x["model"] == req.name), None)
+        spec = {"model": req.name,
+                "framework": "vllm" if "vllm" in req.start_cmd.lower() else "custom",
+                "port": req.port, "image": req.image, "start_cmd": req.start_cmd,
+                "workdir": req.workdir, "env": req.env}
+        if inst:
+            inst.update(spec)
+        else:
+            INSTANCES.append(spec)
+        _save_services()
+        await _push_event("OK", f"svc ▸ {req.name} 启动完成: {result}")
+    except Exception as e:  # noqa: BLE001
+        await _push_event("ERR", f"svc ▸ {req.name} 启动失败: {e}")
+
+
+async def _push_event(level: str, msg: str) -> None:
+    try:
+        line = json.dumps({"ts": round(time.time(), 3), "level": level, "msg": msg},
+                          ensure_ascii=False)
+        r = redis()
+        async with r.pipeline() as p:
+            p.rpush("hs:events", line)
+            p.ltrim("hs:events", -200, -1)
+            await p.execute()
+    except Exception:  # noqa: BLE001 —— 事件上报失败不影响主流程
+        pass
+
+
 @app.post("/services/start")
 async def start(req: StartRequest) -> dict:
-    result = await ctl.start(req)
-    # 登记到动态实例表（控制台下发 → 心跳上报 → 控制台/路由可见）
-    inst = next((x for x in INSTANCES if x["model"] == req.name), None)
-    spec = {"model": req.name,
-            "framework": "vllm" if "vllm" in req.start_cmd.lower() else "custom",
-            "port": req.port, "image": req.image, "start_cmd": req.start_cmd,
-            "workdir": req.workdir, "env": req.env}
-    if inst:
-        inst.update(spec)
-    else:
-        INSTANCES.append(spec)
-    _save_services()
-    return {"result": result, "registered": req.name}
+    """受理即返回（202 语义）：镜像拉取可能数分钟，异步执行，实例就绪后由心跳上报。"""
+    if req.name in _INFLIGHT:
+        return {"accepted": req.name, "note": "启动已在进行中，勿重复点击"}
+    _INFLIGHT.add(req.name)
+
+    async def _wrap() -> None:
+        try:
+            await _start_bg(req)
+        finally:
+            _INFLIGHT.discard(req.name)
+
+    asyncio.create_task(_wrap())
+    return {"accepted": req.name, "note": "启动中（镜像拉取可能需要数分钟），实例就绪后自动上线"}
 
 
 @app.post("/services/stop/{name}")

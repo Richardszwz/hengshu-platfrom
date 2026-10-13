@@ -240,12 +240,13 @@ async function submitLaunch() {
   const volumes = launch.volText.split('\n').map(s => s.trim()).filter(s => /^\/[^:]+:\/[^:]+(:ro|:rw)?$/.test(s))
   launchBusy.value = true
   try {
-    await api.launchService(launch.node, {
+    const d = await api.launchService(launch.node, {
       name: launch.name, image: launch.image,
       start_cmd: launch.start_cmd.replaceAll('{port}', String(launch.port)),
       port: launch.port, workdir: '/workspace', env, volumes
     })
     launchOpen.value = false
+    alert(d.note || d.accepted ? `已受理：${launch.name}\n${d.note || ''}\n实例就绪后自动出现在驾驶舱服务表。` : '已下发')
     refresh()
   } catch (e: any) {
     launchError.value = e?.response?.data?.detail || e?.message || '下发失败'

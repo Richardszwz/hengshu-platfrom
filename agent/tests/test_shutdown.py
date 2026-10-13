@@ -32,3 +32,23 @@ def test_shutdown_endpoint(monkeypatch):
 
     assert called.get("cmd") == ("docker", "rm", "-f", "hengshu-agent")
     assert called.get("exit") == 0
+
+
+def test_start_async_accept_and_dedupe(monkeypatch):
+    """服务启动改为受理制：立即返回 accepted；同名进行中重复提交被拒。"""
+    import asyncio
+
+    async def hang(req):
+        await asyncio.sleep(30)
+        return "ok"
+
+    monkeypatch.setattr(main.ctl, "start", hang)
+    with TestClient(main.app) as c:
+        body = {"name": "m1", "start_cmd": "sleep 9", "port": 8000}
+        r = c.post("/services/start", json=body)
+        assert r.status_code == 200 and r.json()["accepted"] == "m1"
+        # 后台任务仍在挂起 → 重复提交提示进行中
+        import time as _t
+        _t.sleep(0.3)
+        r2 = c.post("/services/start", json=body)
+        assert "进行中" in r2.json()["note"]
