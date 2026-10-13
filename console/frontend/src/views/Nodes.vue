@@ -84,7 +84,7 @@
       <div class="p-title">启动新服务 <span class="sub">下发至 {{ launch.node }} · Docker 运行</span></div>
       <div class="launch-body">
         <label>服务/模型名 <input v-model.trim="launch.name" class="inp" placeholder="如 Qwen3-8B" /></label>
-        <label>镜像 <input v-model.trim="launch.image" class="inp" placeholder="vllm/vllm-openai:latest（arm64 节点填 GB10/Jetson 兼容镜像）" /></label>
+        <label>镜像 <input v-model.trim="launch.image" class="inp" placeholder="docker.1ms.run/vllm/vllm-openai:latest（docker.io 不通就走镜像站前缀；arm64 节点填 GB10/Jetson 兼容镜像）" /></label>
         <label>启动命令 <input v-model.trim="launch.start_cmd" class="inp mono-inp"
           placeholder="vllm serve /models/qwen --port {port} --served-model-name Qwen3-8B" /></label>
         <label>服务端口 <input v-model.number="launch.port" class="inp" type="number" placeholder="8100" /></label>
@@ -213,7 +213,7 @@ async function reinstall(n: any) {
 const launchOpen = ref(false)
 const launchBusy = ref(false)
 const launchError = ref('')
-const launch = reactive({ node: '', name: '', image: 'vllm/vllm-openai:latest', start_cmd: '', port: 8100, envText: '', volText: '' })
+const launch = reactive({ node: '', name: '', image: 'docker.1ms.run/vllm/vllm-openai:latest', start_cmd: '', port: 8100, envText: '', volText: '' })
 
 function openLaunch(n: any) {
   launch.node = n.node_id
