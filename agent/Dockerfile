@@ -3,6 +3,17 @@
 ARG BASE_IMAGE=python:3.11-slim
 FROM ${BASE_IMAGE}
 
+# Docker CLI（静态二进制，服务管控走宿主 docker.sock；双架构按 TARGETARCH 选包）
+ARG TARGETARCH
+ARG DOCKER_VERSION=27.5.1
+ARG DOCKER_MIRROR=https://mirrors.aliyun.com/docker-ce/linux/static/stable
+RUN set -e; \
+    ARCH=$([ "${TARGETARCH:-amd64}" = "arm64" ] && echo aarch64 || echo x86_64); \
+    apt-get update && apt-get install -y --no-install-recommends curl ca-certificates; \
+    curl -fsSL "${DOCKER_MIRROR}/${ARCH}/docker-${DOCKER_VERSION}.tgz" | tar xz --strip-components=1 -C /usr/local/bin docker/docker; \
+    docker --version; \
+    apt-get purge -y curl; apt-get autoremove -y; rm -rf /var/lib/apt/lists/*
+
 WORKDIR /opt/agent
 COPY requirements.txt .
 ARG PIP_INDEX=https://mirrors.aliyun.com/pypi/simple/
