@@ -106,7 +106,8 @@ _INFLIGHT: set[str] = set()
 
 
 async def _start_bg(req: StartRequest) -> None:
-    """后台执行：拉镜像（可达数分钟）→ 起容器 → 登记实例。失败写事件流。"""
+    """后台执行：拉镜像（可达数分钟）→ 起容器 → 登记实例。全程写事件流。"""
+    await _push_event("INFO", f"svc ▸ {req.name} 开始执行：拉取镜像 {req.image}（大镜像需数分钟）")
     try:
         result = await ctl.start(req)
         inst = next((x for x in INSTANCES if x["model"] == req.name), None)
@@ -125,6 +126,7 @@ async def _start_bg(req: StartRequest) -> None:
 
 
 async def _push_event(level: str, msg: str) -> None:
+    """事件双写：集群事件流 hs:events + 节点系统日志 hs:nodelog:{id}（各留 200 条）。"""
     try:
         line = json.dumps({"ts": round(time.time(), 3), "level": level, "msg": msg},
                           ensure_ascii=False)
@@ -132,6 +134,8 @@ async def _push_event(level: str, msg: str) -> None:
         async with r.pipeline() as p:
             p.rpush("hs:events", line)
             p.ltrim("hs:events", -200, -1)
+            p.rpush(f"hs:nodelog:{settings.node_id}", line)
+            p.ltrim(f"hs:nodelog:{settings.node_id}", -200, -1)
             await p.execute()
     except Exception:  # noqa: BLE001 —— 事件上报失败不影响主流程
         pass

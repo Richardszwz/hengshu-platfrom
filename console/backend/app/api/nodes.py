@@ -1,6 +1,7 @@
 """节点 API：列表（读 Redis 心跳）+ SSH 添加骨架（P1 实装推送安装）。"""
 from __future__ import annotations
 
+import json
 import time
 
 import httpx
@@ -125,6 +126,19 @@ async def install_node(node_id: str, req: NodeAddReq, r=Depends(deps.get)) -> di
     # Webhook 通知（HENGSHU_WEBHOOK_URL 设置时启用）
     await hooks.emit("install.result", {"node_id": node_id, **result})
     return result
+
+
+@router.get("/{node_id}/logs")
+async def node_logs(node_id: str, tail: int = 100, r=Depends(deps.get)) -> dict:
+    """节点系统日志：Agent 生命周期事件（受理/拉镜像/成败/自杀等），新→旧。"""
+    raw = await r.lrange(f"hs:nodelog:{node_id}", -tail, -1)
+    lines = []
+    for line in reversed(raw):
+        try:
+            lines.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return {"lines": lines}
 
 
 @router.post("/{node_id}/stop-agent", dependencies=[Depends(require_role("operator"))])

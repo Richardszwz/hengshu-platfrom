@@ -73,6 +73,16 @@ async def launch_service(node_id: str, req: StartServiceReq, r=Depends(deps.get)
     if resp.status_code != 200:
         raise HTTPException(resp.status_code, resp.text[:200])
     import json as _json
+    import time as _time
+    from ..keys import EVENTS_KEY
+    # 事件流留痕：下发受理（后续进度由 Agent 写：开始拉取/启动完成/失败）
+    async with r.pipeline() as p:
+        p.rpush(EVENTS_KEY, _json.dumps({
+            "ts": round(_time.time(), 3), "level": "INFO",
+            "msg": f"svc ▸ 控制台下发启动指令 {node_id}/{req.name}（异步受理）"},
+            ensure_ascii=False))
+        p.ltrim(EVENTS_KEY, -200, -1)
+        await p.execute()
     spec = req.model_dump()
     scalar = {k: str(v) for k, v in spec.items() if k not in ("env", "volumes")}
     scalar["env_json"] = _json.dumps(req.env)

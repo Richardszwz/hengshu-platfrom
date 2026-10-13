@@ -409,16 +409,25 @@ async function openNode(n: any) {
   showAlerts.value = false
   await nextTick()
   renderCharts()
-  // 拉取节点上第一个服务的日志（真实链路：console → agent）
+  // 节点系统日志 = Agent 生命周期事件（受理/拉镜像/成败）+ 首个服务的容器日志
+  const lines: any[] = []
+  try {
+    const nl = await api.nodeLogs(n.id, 60)
+    for (const e of (nl.lines || [])) {
+      const d = new Date(e.ts * 1000)
+      const p = (x: number) => String(x).padStart(2, '0')
+      lines.push({ t: `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`,
+                   level: e.level, msg: e.msg, src: 'agent' })
+    }
+  } catch { /* 节点离线时无日志源 */ }
   const svc = services.value.find(x => x.node === n.id)
   if (svc) {
     try {
       const d = await api.serviceLogs(n.id, svc.model, 40)
-      drawerLogs.value = d.lines || []
-    } catch {
-      drawerLogs.value = []
-    }
+      for (const l of (d.lines || [])) lines.push(l)
+    } catch { /* 服务日志拉取失败不阻塞 */ }
   }
+  drawerLogs.value = lines
 }
 
 function closeDrawer() {

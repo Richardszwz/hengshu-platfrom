@@ -221,3 +221,18 @@ def test_tombstone_hides_and_add_clears(client) -> None:
                                         "username": "u", "password": "p123456"})
     assert r.status_code == 200
     assert asyncio.run(fake.get("hs:node_del:ghost")) is None
+
+
+def test_node_logs_endpoint(client) -> None:
+    """节点系统日志：读 hs:nodelog:{id}，新→旧。"""
+    import asyncio
+    import json as _j
+    fake = app.dependency_overrides[deps.get]()
+    asyncio.run(fake.rpush("hs:nodelog:X86-9",
+                           _j.dumps({"ts": 1.0, "level": "INFO", "msg": "受理"}),
+                           _j.dumps({"ts": 2.0, "level": "OK", "msg": "完成"})))
+    r = client.get("/api/nodes/X86-9/logs")
+    assert r.status_code == 200
+    lines = r.json()["lines"]
+    assert [l["msg"] for l in lines] == ["完成", "受理"]  # 新→旧
+    assert client.get("/api/nodes/none/logs").json()["lines"] == []
