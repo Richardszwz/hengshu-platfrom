@@ -224,19 +224,21 @@ body::after {
 
 .dlog { margin-top: 12px; }
 .log-box {
-  height: 190px; overflow-y: auto; font-family: 'JetBrains Mono', 'Noto Sans SC', monospace;
+  height: 190px; overflow: auto; font-family: 'JetBrains Mono', 'Noto Sans SC', monospace;
   font-size: 10.5px; line-height: 1.85; padding: 8px 10px;
   background: rgba(0, 8, 16, .6); border: 1px solid rgba(0, 229, 255, .15);
 }
-.log-line { white-space: nowrap; display: flex; gap: 8px; }
+.log-line { white-space: nowrap; display: flex; gap: 8px; min-width: max-content; }
 .log-line .lt { color: #4a6a80; flex: none; }
 .log-line .lv { flex: none; font-weight: 700; width: 44px; }
 .log-line .lv.INFO { color: var(--cyan); }
 .log-line .lv.OK { color: var(--green); }
 .log-line .lv.WARN { color: var(--amber); }
 .log-line .lv.ERROR { color: var(--red); }
-.log-line .lm { color: var(--txt); overflow: hidden; text-overflow: ellipsis; }
+.log-line .lm { color: var(--txt); }
 .log-line .ls { color: #4a6a80; margin-left: auto; flex: none; padding-left: 12px; }
+/* 横向滚动条（长日志左右平移查看完整内容） */
+.log-box::-webkit-scrollbar:horizontal { height: 6px; }
 
 /* ============ 登录页 ============ */
 .login-wrap {
