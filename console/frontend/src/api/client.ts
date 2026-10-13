@@ -51,6 +51,8 @@ export const api = {
     axios.post(`/api/services/${node}/start`, payload).then(r => r.data),
   stopService: (node: string, name: string) =>
     axios.post(`/api/services/${node}/${name}/stop`).then(r => r.data),
+  deleteService: (node: string, name: string) =>
+    axios.delete(`/api/services/${node}/${name}`).then(r => r.data),
   startService: (node: string, name: string) =>
     axios.post(`/api/services/${node}/${name}/start`).then(r => r.data),
   serviceLogs: (node: string, name: string, tail = 100) =>

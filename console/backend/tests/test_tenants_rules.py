@@ -236,3 +236,19 @@ def test_node_logs_endpoint(client) -> None:
     lines = r.json()["lines"]
     assert [l["msg"] for l in lines] == ["完成", "受理"]  # 新→旧
     assert client.get("/api/nodes/none/logs").json()["lines"] == []
+
+
+def test_delete_service_clears_registry(client) -> None:
+    """删除服务：实例 key/模型集合/spec 全清（Agent 不可达时仅清登记也成立）。"""
+    import asyncio
+    fake = app.dependency_overrides[deps.get]()
+    asyncio.run(fake.hset("hs:node:N1", mapping={"last_seen": "9999999999"}))
+    asyncio.run(fake.hset("hs:inst:N1:8100", mapping={"model": "qwen", "status": "running"}))
+    asyncio.run(fake.sadd("hs:model:qwen", "N1:8100"))
+    asyncio.run(fake.hset("hs:svcspec:N1:qwen", mapping={"image": "x"}))
+
+    r = client.delete("/api/services/N1/qwen")
+    assert r.status_code == 200 and r.json()["deleted"] == "qwen"
+    assert asyncio.run(fake.keys("hs:inst:N1:*")) == []
+    assert asyncio.run(fake.smembers("hs:model:qwen")) == set()
+    assert asyncio.run(fake.exists("hs:svcspec:N1:qwen")) == 0

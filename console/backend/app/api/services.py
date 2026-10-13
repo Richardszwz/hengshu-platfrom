@@ -99,6 +99,29 @@ async def stop_service(node_id: str, name: str, r=Depends(deps.get)) -> dict:
     return resp.json()
 
 
+@router.delete("/{node_id}/{name}", dependencies=[Depends(require_role("operator"))])
+async def delete_service(node_id: str, name: str, r=Depends(deps.get)) -> dict:
+    """删除服务：尽力停容器 → 清实例登记/模型集合/持久化 spec，列表彻底消失。"""
+    stopped = None
+    try:
+        addr = await _agent_addr(node_id, r)
+        async with httpx.AsyncClient(timeout=10.0, trust_env=False) as c:
+            # Agent 删除端点会同时移除其本地实例登记（防心跳复活）
+            stopped = (await c.post(f"{addr}/services/delete/{name}")).json()
+    except Exception as e:  # noqa: BLE001 —— 节点离线/Agent 不可达也要能清登记
+        stopped = f"agent 不可达（{type(e).__name__}），仅清登记"
+    # 实例 key 直接删（不等 TTL）
+    iid_keys = [k for k in await r.keys(f"{INST_PREFIX}{node_id}:*")
+                if (await r.hget(k, "model")) == name]
+    if iid_keys:
+        await r.delete(*iid_keys)
+        for k in iid_keys:
+            iid = k.removeprefix(INST_PREFIX)
+            await r.srem(f"{MODEL_PREFIX}{name}", iid)
+    await r.delete(f"{SPEC_PREFIX}{node_id}:{name}")
+    return {"deleted": name, "node": node_id, "agent": stopped}
+
+
 @router.post("/{node_id}/{name}/start", dependencies=[Depends(require_role("operator"))])
 async def start_service(node_id: str, name: str, r=Depends(deps.get)) -> dict:
     """重启已停服务：优先用持久化 spec；无 spec 走旧版裸指令（兼容 mock）。"""

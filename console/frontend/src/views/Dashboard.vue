@@ -124,6 +124,7 @@
                 <button class="mini-btn" @click="showLogs(s)">日志</button>
                 <button v-if="s.status === 'running'" class="mini-btn danger" @click="stop(s)">停止</button>
                 <button v-else class="mini-btn go" @click="start(s)">启动</button>
+                <button class="mini-btn danger" @click="delService(s)">删除</button>
               </td>
             </tr>
           </tbody>
@@ -441,6 +442,17 @@ async function showLogs(s: any) {
 /* ---------- 服务操作 ---------- */
 async function stop(s: any) {
   await api.stopService(s.node, s.model)
+  await refresh()
+}
+
+async function delService(s: any) {
+  if (!confirm(`删除服务 ${s.model}（节点 ${s.node}）？容器将停止并移除登记，不可恢复`)) return
+  try {
+    const d = await api.deleteService(s.node, s.model)
+    if (typeof d.agent === 'string' && d.agent.includes('不可达')) alert(d.agent)
+  } catch (e: any) {
+    alert(e?.response?.data?.detail || '删除失败')
+  }
   await refresh()
 }
 

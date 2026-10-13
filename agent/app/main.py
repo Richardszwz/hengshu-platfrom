@@ -163,6 +163,18 @@ async def stop(name: str) -> dict:
     return {"result": await ctl.stop(name)}
 
 
+@app.post("/services/delete/{name}")
+async def delete_service(name: str) -> dict:
+    """删除服务：停容器 + 从动态实例表/持久化清单移除（防心跳重新注册复活）。"""
+    result = await ctl.stop(name)
+    before = len(INSTANCES)
+    INSTANCES[:] = [x for x in INSTANCES if x["model"] != name]
+    if len(INSTANCES) != before:
+        _save_services()
+    await _push_event("OK", f"svc ▸ {name} 已删除（容器停止 + 登记移除）")
+    return {"deleted": name, "result": result, "deregistered": len(INSTANCES) != before}
+
+
 @app.post("/shutdown")
 async def shutdown() -> dict:
     """远程停止 Agent（控制台「停止Agent」按钮）。

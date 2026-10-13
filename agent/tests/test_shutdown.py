@@ -52,3 +52,20 @@ def test_start_async_accept_and_dedupe(monkeypatch):
         _t.sleep(0.3)
         r2 = c.post("/services/start", json=body)
         assert "进行中" in r2.json()["note"]
+
+
+def test_service_delete_deregisters(monkeypatch):
+    """删除服务：停容器 + 从 INSTANCES 移除（防心跳复活）。"""
+    async def fake_stop(name):
+        return "container stopped"
+    monkeypatch.setattr(main.ctl, "stop", fake_stop)
+    saved = {}
+    monkeypatch.setattr(main, "_save_services", lambda: saved.setdefault("ok", True))
+    monkeypatch.setattr(main, "_push_event", lambda *a: asyncio.sleep(0))
+    main.INSTANCES[:] = [{"model": "m1", "port": 8000}, {"model": "m2", "port": 8001}]
+    with TestClient(main.app) as c:
+        r = c.post("/services/delete/m1")
+        assert r.json()["deregistered"] is True
+    assert [x["model"] for x in main.INSTANCES] == ["m2"]
+    assert saved.get("ok")
+    main.INSTANCES[:] = []
