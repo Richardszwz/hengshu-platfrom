@@ -35,6 +35,17 @@ async def _run(client: asyncssh.SSHClientConnection, cmd: str, timeout: float = 
     return (result.stdout or result.stderr or "").strip()
 
 
+async def _detect_docker(conn: asyncssh.SSHClientConnection) -> tuple[str, str]:
+    """探测 docker 可用性，返回 (命令前缀, 版本)。用户不在 docker 组时回退 sudo -n。"""
+    v = await _run(conn, "docker info --format '{{.ServerVersion}}' 2>/dev/null")
+    if v:
+        return "docker", v
+    v = await _run(conn, "sudo -n docker info --format '{{.ServerVersion}}' 2>/dev/null")
+    if v:
+        return "sudo -n docker", v
+    return "", ""
+
+
 async def _fingerprint_tofu(r: aioredis.Redis, node_id: str, host: str,
                             conn: asyncssh.SSHClientConnection) -> str:
     key = conn.get_server_host_key()
@@ -85,9 +96,14 @@ async def install(r: aioredis.Redis, *, node_id: str, host: str, ssh_port: int,
             arch = (await _run(conn, "uname -m")) or "unknown"
             await log("INFO", f"install ▸ 架构探测: {arch}")
 
-            docker_v = await _run(conn, "docker info --format '{{.ServerVersion}}' 2>/dev/null")
+            docker_cmd, docker_v = await _detect_docker(conn)
             if not docker_v:
-                raise RuntimeError("目标机 docker 不可用(非 root 组?未安装?) — 气隙/裸机路径 P1.2")
+                raise RuntimeError(
+                    "目标机 docker 不可用：SSH 用户不在 docker 组且免密 sudo 不可用。"
+                    "修复二选一：目标机执行 sudo usermod -aG docker $USER 后重新登录；"
+                    "或配置免密 sudo（echo '$USER ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/90-docker）")
+            if docker_cmd != "docker":
+                await log("INFO", "install ▸ 用户不在 docker 组，自动回退 sudo -n docker")
             await log("OK", f"install ▸ Docker {docker_v}")
 
             gpu = await _run(conn, "nvidia-smi -L 2>/dev/null | head -1")
@@ -103,7 +119,7 @@ async def install(r: aioredis.Redis, *, node_id: str, host: str, ssh_port: int,
                     await log("INFO", f"install ▸ 气隙模式装载 {tar_path}")
                     async with conn.start_sftp_client() as sftp:
                         await sftp.put(tar_path, "/tmp/hengshu-agent.tar")
-                    load_out = await _run(conn, "docker load -i /tmp/hengshu-agent.tar", timeout=300)
+                    load_out = await _run(conn, f"{docker_cmd} load -i /tmp/hengshu-agent.tar", timeout=300)
                     await _run(conn, "rm -f /tmp/hengshu-agent.tar")
                     # docker load 失败（格式不符/损坏）必须显式报错，否则 docker run 才暴露且难排查
                     if "Loaded image" not in load_out:
@@ -112,9 +128,9 @@ async def install(r: aioredis.Redis, *, node_id: str, host: str, ssh_port: int,
 
             # 清理旧实例（幂等重装）
             await _run(conn,
-                       "docker rm -f hengshu-agent 2>/dev/null; true")
+                       f"{docker_cmd} rm -f hengshu-agent 2>/dev/null; true")
             cmd = (
-                "docker run -d --name hengshu-agent --restart unless-stopped "
+                f"{docker_cmd} run -d --name hengshu-agent --restart unless-stopped "
                 f"-e REDIS_URL='{redis_advertise}' -e NODE_ID='{node_id}' "
                 "-e AGENT_PORT=9100 -p 9100:9100 "
                 "-v /var/run/docker.sock:/var/run/docker.sock "
@@ -128,7 +144,7 @@ async def install(r: aioredis.Redis, *, node_id: str, host: str, ssh_port: int,
             rc_out = await _run(conn, cmd, timeout=INSTALL_TIMEOUT)
             # 校验容器真实运行（docker run 失败也会输出"Unable to find image..."等文本）
             state = await _run(conn,
-                               "docker inspect -f '{{.State.Running}}' hengshu-agent 2>/dev/null")
+                               f"{docker_cmd} inspect -f '{{{{.State.Running}}}}' hengshu-agent 2>/dev/null")
             if state.strip() != "true":
                 raise RuntimeError(
                     f"Agent 容器未运行（镜像缺失/启动失败）: {(rc_out or state)[:300]}")

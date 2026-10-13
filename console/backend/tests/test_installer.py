@@ -53,3 +53,32 @@ def test_install_invalid_pem_graceful():
     assert "error" in out
     assert "私钥格式无法解析" in out["error"]
     assert any("失败" in s for s in out["steps"])
+
+
+def test_detect_docker_sudo_fallback():
+    """docker 直连失败 → sudo -n 回退；两者都失败 → 空前缀。"""
+    import asyncio
+    from app import ssh_installer
+
+    class R:
+        def __init__(self, out): self.stdout, self.stderr = out, ""
+
+    class Conn:
+        def __init__(self, sudo_ok): self.sudo_ok = sudo_ok
+        async def run(self, cmd):
+            if cmd.startswith("sudo -n docker"):
+                return R("27.1.0" if self.sudo_ok else "")
+            return R("")  # 直连全失败
+
+    cmd, v = asyncio.run(ssh_installer._detect_docker(Conn(sudo_ok=True)))
+    assert cmd == "sudo -n docker" and v == "27.1.0"
+    cmd, v = asyncio.run(ssh_installer._detect_docker(Conn(sudo_ok=False)))
+    assert cmd == "" and v == ""
+
+    class ConnDirect:
+        async def run(self, cmd):
+            assert not cmd.startswith("sudo")  # 直连成功不该碰 sudo
+            return R("27.1.0")
+
+    cmd, v = asyncio.run(ssh_installer._detect_docker(ConnDirect()))
+    assert cmd == "docker" and v == "27.1.0"
