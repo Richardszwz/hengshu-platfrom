@@ -541,8 +541,11 @@ onUnmounted(() => {
 .donut-center b { font-family: var(--font-num); font-size: 30px; color: var(--cyan); display: block; }
 .donut-center span { font-size: 11px; color: var(--txt-dim); }
 
-/* ---------- 节点卡片 ---------- */
+/* ---------- 节点卡片：1 个拉满，2/3 个平分，最多 4 个一排 ---------- */
 .nodes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.nodes:has(> :nth-child(1):last-child) { grid-template-columns: 1fr; }
+.nodes:has(> :nth-child(2):last-child) { grid-template-columns: repeat(2, 1fr); }
+.nodes:has(> :nth-child(3):last-child) { grid-template-columns: repeat(3, 1fr); }
 .node { cursor: pointer; transition: transform .15s, box-shadow .15s; }
 .node:hover { transform: translateY(-2px); box-shadow: 0 6px 24px rgba(0, 200, 255, .12); }
 .nt { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
@@ -566,7 +569,7 @@ onUnmounted(() => {
 .n-foot { display: flex; justify-content: space-between; font-size: 10px; color: var(--txt-faint); margin-top: 8px; border-top: 1px dashed rgba(0,229,255,.15); padding-top: 6px; }
 .n-foot b { color: var(--txt-dim); font-family: var(--font-num); }
 .node-detail { margin-top: 8px; }
-.grid-c { display: grid; grid-template-columns: 1.2fr 1fr; gap: 12px; }
+.grid-c { display: grid; grid-template-columns: 1fr; gap: 12px; }  /* 事件流拉满整行 */
 
 /* ---------- 集群事件流 ---------- */
 .evts { max-height: 230px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
