@@ -26,6 +26,7 @@ export const api = {
   addNode: (payload: object) => axios.post('/api/nodes', payload).then(r => r.data),
   installNode: (nodeId: string, payload: object) =>
     axios.post(`/api/nodes/${nodeId}/install`, payload).then(r => r.data),
+  stopAgent: (nodeId: string) => axios.post(`/api/nodes/${nodeId}/stop-agent`).then(r => r.data),
   removeNode: (nodeId: string) => axios.delete(`/api/nodes/${nodeId}`).then(r => r.data),
   // 审计：事件流 + 终端录屏
   auditsEvents: () => axios.get('/api/audits/events').then(r => r.data),

@@ -124,6 +124,27 @@ async def stop(name: str) -> dict:
     return {"result": await ctl.stop(name)}
 
 
+@app.post("/shutdown")
+async def shutdown() -> dict:
+    """远程停止 Agent（控制台「停止Agent」按钮）。
+
+    容器以 --restart unless-stopped 运行，进程退出会被 Docker 拉起，
+    故通过 docker.sock 删除自身容器；无 docker 时退化为进程退出。
+    """
+    cname = os.getenv("AGENT_CONTAINER_NAME", "hengshu-agent")
+
+    async def _kill() -> None:
+        await asyncio.sleep(0.5)  # 先让响应发回控制台
+        import shutil
+        if shutil.which("docker"):
+            p = await asyncio.create_subprocess_exec("docker", "rm", "-f", cname)
+            await p.wait()
+        os._exit(0)
+
+    asyncio.create_task(_kill())
+    return {"stopping": True, "container": cname}
+
+
 @app.get("/services/{name}/logs")
 async def logs(name: str, tail: int = 100) -> dict:
     return {"lines": await ctl.logs(name, tail)}

@@ -62,6 +62,7 @@
               <td class="dim">{{ fmtAgo(n.last_seen) }}</td>
               <td>
                 <button v-if="n.status === 'online'" class="op go" @click="openLaunch(n)">启动服务</button>
+                <button v-if="n.status === 'online'" class="op warn" @click="stopAgent(n)">停止Agent</button>
                 <button class="op danger" @click="remove(n)">删除</button>
               </td>
             </tr>
@@ -172,6 +173,17 @@ async function remove(n: any) {
   refresh()
 }
 
+async function stopAgent(n: any) {
+  if (!confirm(`远程停止 ${n.node_id} 的 Agent？\n容器将被删除（防自动重启），节点转离线后才能删除登记。`)) return
+  try {
+    const d = await api.stopAgent(n.node_id)
+    alert(`已下发停止指令：${d.note || d.container || 'OK'}\n约 15 秒后节点转离线。`)
+  } catch (e: any) {
+    alert(e?.response?.data?.detail || e?.message || '停止失败')
+  }
+  refresh()
+}
+
 /* ---------- 启动服务对话框（入口在节点行） ---------- */
 const launchOpen = ref(false)
 const launchBusy = ref(false)
@@ -277,6 +289,8 @@ tr:hover td { background: rgba(0, 200, 255, .04); }
 .op:hover { color: var(--red); border-color: rgba(255, 77, 90, .4); }
 .op.go { color: var(--cyan, #37b6ff); border-color: rgba(55, 182, 255, .4); }
 .op.go:hover { color: #fff; border-color: var(--cyan, #37b6ff); }
+.op.warn { color: var(--yellow, #ffc857); border-color: rgba(255, 200, 87, .4); }
+.op.warn:hover { color: #fff; border-color: var(--yellow, #ffc857); }
 .svc-dim { color: var(--txt-faint); font-size: 11px; margin-top: 8px; }
 
 /* ---------- 启动服务对话框 ---------- */

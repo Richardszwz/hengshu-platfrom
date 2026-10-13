@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
@@ -109,6 +110,28 @@ async def install_node(node_id: str, req: NodeAddReq, r=Depends(deps.get)) -> di
     # Webhook 通知（HENGSHU_WEBHOOK_URL 设置时启用）
     await hooks.emit("install.result", {"node_id": node_id, **result})
     return result
+
+
+@router.post("/{node_id}/stop-agent", dependencies=[Depends(require_role("operator"))])
+async def stop_agent(node_id: str, r=Depends(deps.get)) -> dict:
+    """远程停止目标机 Agent（调 agent /shutdown，其自杀会删容器防 restart 拉起）。
+
+    停止后心跳 15s 内失效，节点转离线，此时可删除。
+    """
+    h = await r.hgetall(f"{NODE_PREFIX}{node_id}")
+    if not h:
+        raise HTTPException(404, "node not online")
+    addr = h.get("agent_addr")
+    if not addr:
+        raise HTTPException(400, "该节点 Agent 为旧版（无 agent_addr），请先用「重装」升级镜像")
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as c:
+            resp = await c.post(f"{addr}/shutdown")
+        out = resp.json()
+    except Exception as e:  # noqa: BLE001 —— Agent 自杀可能秒断连，视为已停止
+        out = {"stopping": True, "note": f"连接中断（预期内）: {type(e).__name__}"}
+    await hooks.emit("node.stop_agent", {"node_id": node_id, "result": out})
+    return {"node_id": node_id, **out}
 
 
 @router.delete("/{node_id}", dependencies=[Depends(require_role("operator"))])

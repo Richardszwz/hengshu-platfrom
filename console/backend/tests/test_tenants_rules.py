@@ -179,3 +179,15 @@ def test_users_crud_and_role_guard(client) -> None:
     # 删除
     assert client.delete("/api/users/v1").status_code == 200
     assert client.delete("/api/users/v1").status_code == 404
+
+
+def test_stop_agent_guards(client) -> None:
+    """远程停止 Agent：离线节点 404；旧版 Agent（无 agent_addr）400 指引重装。"""
+    import asyncio
+    import time as _t
+    fake = app.dependency_overrides[deps.get]()
+    asyncio.run(fake.hset("hs:node:S9", mapping={"last_seen": str(int(_t.time()))}))
+
+    r = client.post("/api/nodes/S9/stop-agent")
+    assert r.status_code == 400 and "重装" in r.json()["detail"]
+    assert client.post("/api/nodes/nope/stop-agent").status_code == 404
