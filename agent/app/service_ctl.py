@@ -64,7 +64,13 @@ async def start_docker(req: StartRequest) -> str:
     # 镜像不在本地则先拉取；气隙环境拉取失败也继续 run（镜像可能已离线装载）
     rc, _ = await _run(["docker", "image", "inspect", req.image], timeout=15.0)
     if rc != 0:
-        await _run(["docker", "pull", req.image], timeout=600.0)
+        prc, pout = await _run(["docker", "pull", req.image], timeout=600.0)
+        rc2, _ = await _run(["docker", "image", "inspect", req.image], timeout=15.0)
+        if prc != 0 and rc2 != 0:
+            raise HTTPException(502,
+                f"镜像拉取失败且本地不存在: {req.image}。"
+                f"网络不通时可换镜像站前缀（docker.1ms.run/ / hub.rat.dev/ 等），"
+                f"或在目标机 docker load 离线镜像。pull 输出: {pout[-300:]}")
     env_flags: list[str] = []
     for k, v in req.env.items():
         env_flags += ["-e", f"{k}={v}"]
