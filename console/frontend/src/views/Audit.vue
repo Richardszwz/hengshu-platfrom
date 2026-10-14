@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <AppLayout crumb-prefix="HENGSHU" crumb-title="审计日志">
     <div class="page-header">
       <div class="page-title">审计日志</div>
       <div class="page-sub">终端会话审计 · 高危命令拦截 · 安装事件 · 录屏回放</div>
@@ -43,11 +43,12 @@
         </tbody>
       </table>
     </div>
-  </div>
+  </AppLayout>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import AppLayout from '../components/AppLayout.vue'
 import { api } from '../api/client'
 
 const events = ref<any[]>([])
