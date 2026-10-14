@@ -40,9 +40,13 @@ async def list_nodes(r=Depends(deps.get)) -> dict:
             continue
         seen.add(iid)
         insts = await r.keys(f"{INST_PREFIX}{iid}:*")
+        conn = await r.hgetall(f"hs:conn:{iid}")  # SSH 连接信息（改连接对话框预填）
         nodes.append({
             "node_id": iid,
             "hostname": h.get("hostname", ""),
+            "ssh_host": conn.get("host", ""),
+            "ssh_port": int(conn.get("port", "22")),
+            "ssh_user": conn.get("username", ""),
             "arch": h.get("arch", ""),
             "status": "online" if int(h.get("last_seen", "0")) > time.time() - 15 else "offline",
             "last_seen": int(h.get("last_seen", "0")),
@@ -59,13 +63,38 @@ async def list_nodes(r=Depends(deps.get)) -> dict:
         nodes.append({
             "node_id": nid,
             "hostname": conn.get("host", ""),
+            "ssh_host": conn.get("host", ""),
             "ssh_port": int(conn.get("port", "22")),
+            "ssh_user": conn.get("username", ""),
             "arch": "",
             "status": "pending",
             "last_seen": 0,
             "instances": 0,
         })
     return {"nodes": sorted(nodes, key=lambda x: x["node_id"])}
+
+
+class ConnUpdateReq(BaseModel):
+    hostname: str = Field(min_length=1)
+    ssh_port: int = 22
+    username: str = Field(min_length=1)
+    password: str | None = None      # 留空 = 不换凭证
+    private_key: str | None = None
+
+
+@router.put("/{node_id}/conn", dependencies=[Depends(require_role("operator"))])
+async def update_conn(node_id: str, req: ConnUpdateReq, r=Depends(deps.get)) -> dict:
+    """更新已登记节点的 SSH 连接信息（IP/端口/用户）与凭证（可选）。"""
+    exists = await r.exists(f"hs:conn:{node_id}") or await r.exists(f"{NODE_PREFIX}{node_id}")
+    if not exists:
+        raise HTTPException(404, "节点未登记")
+    await r.hset(f"hs:conn:{node_id}", mapping={
+        "host": req.hostname, "port": str(req.ssh_port), "username": req.username})
+    cred_updated = False
+    if req.password or req.private_key:
+        await r.set(f"{CRED_PREFIX}{node_id}", encrypt(req.private_key or req.password or ""))
+        cred_updated = True
+    return {"updated": node_id, "host": req.hostname, "credential_updated": cred_updated}
 
 
 @router.post("", dependencies=[Depends(require_role("operator"))])

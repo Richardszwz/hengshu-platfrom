@@ -66,6 +66,7 @@
                   {{ reinstalling === n.node_id ? '重装中…' : '重装' }}
                 </button>
                 <button v-if="n.status === 'online'" class="op warn" @click="stopAgent(n)">停止Agent</button>
+                <button class="op" @click="openConn(n)">改连接</button>
                 <button class="op danger" @click="remove(n)">删除</button>
               </td>
             </tr>
@@ -97,6 +98,23 @@
       <div class="launch-foot">
         <button class="mini-btn" @click="launchOpen = false">取消</button>
         <button class="mini-btn go" :disabled="launchBusy" @click="submitLaunch">{{ launchBusy ? '下发中…' : '启动' }}</button>
+      </div>
+    </div>
+    <!-- 改连接对话框 -->
+    <div class="mask" :class="{ on: connOpen }" @click="connOpen = false"></div>
+    <div class="launch-dialog panel" :class="{ open: connOpen }">
+      <div class="p-title">修改连接 <span class="sub">{{ conn.node_id }} · SSH</span></div>
+      <div class="launch-body">
+        <label>主机地址（IP/主机名）<input v-model.trim="conn.hostname" class="inp" /></label>
+        <label>SSH 端口 <input v-model.number="conn.ssh_port" class="inp" type="number" /></label>
+        <label>SSH 用户 <input v-model.trim="conn.username" class="inp" /></label>
+        <label>新密码 / 私钥（留空 = 不换凭证）
+          <textarea v-model="conn.secret" class="inp env-inp" rows="2" placeholder="留空保持不变"></textarea></label>
+        <p v-if="connError" class="err">{{ connError }}</p>
+      </div>
+      <div class="launch-foot">
+        <button class="mini-btn" @click="connOpen = false">取消</button>
+        <button class="mini-btn go" :disabled="connBusy" @click="submitConn">{{ connBusy ? '保存中…' : '保存' }}</button>
       </div>
     </div>
   </AppLayout>
@@ -186,6 +204,41 @@ async function stopAgent(n: any) {
     alert(e?.response?.data?.detail || e?.message || '停止失败')
   }
   refresh()
+}
+
+/* ---------- 改连接对话框 ---------- */
+const connOpen = ref(false)
+const connBusy = ref(false)
+const connError = ref('')
+const conn = reactive({ node_id: '', hostname: '', ssh_port: 22, username: '', secret: '' })
+
+function openConn(n: any) {
+  conn.node_id = n.node_id
+  conn.hostname = n.ssh_host || n.hostname || ''
+  conn.ssh_port = n.ssh_port || 22
+  conn.username = n.ssh_user || ''
+  conn.secret = ''
+  connError.value = ''
+  connOpen.value = true
+}
+
+async function submitConn() {
+  connError.value = ''
+  if (!conn.hostname || !conn.username) { connError.value = '主机地址/SSH 用户必填'; return }
+  connBusy.value = true
+  try {
+    const payload: any = { hostname: conn.hostname, ssh_port: conn.ssh_port, username: conn.username }
+    const sec = conn.secret.trim()
+    if (sec) {
+      if (sec.includes('PRIVATE KEY')) payload.private_key = sec
+      else payload.password = sec
+    }
+    await api.updateConn(conn.node_id, payload)
+    connOpen.value = false
+    refresh()
+  } catch (e: any) {
+    connError.value = e?.response?.data?.detail || '保存失败'
+  } finally { connBusy.value = false }
 }
 
 /* ---------- 重装（复用已存连接信息+凭证，后端回退） ---------- */

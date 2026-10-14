@@ -252,3 +252,27 @@ def test_delete_service_clears_registry(client) -> None:
     assert asyncio.run(fake.keys("hs:inst:N1:*")) == []
     assert asyncio.run(fake.smembers("hs:model:qwen")) == set()
     assert asyncio.run(fake.exists("hs:svcspec:N1:qwen")) == 0
+
+
+def test_update_conn(client) -> None:
+    """改连接：更新 hs:conn + 可选换凭证；未登记 404；留空密码不动旧凭证。"""
+    import asyncio
+    from app.crypto import decrypt, encrypt
+    fake = app.dependency_overrides[deps.get]()
+    asyncio.run(fake.hset("hs:conn:N1", mapping={"host": "1.1.1.1", "port": "22", "username": "old"}))
+    asyncio.run(fake.set("hs:cred:N1", encrypt("old-pw")))
+
+    r = client.put("/api/nodes/N1/conn", json={
+        "hostname": "2.2.2.2", "ssh_port": 2222, "username": "new"})
+    assert r.status_code == 200 and r.json()["credential_updated"] is False
+    conn = asyncio.run(fake.hgetall("hs:conn:N1"))
+    assert conn == {"host": "2.2.2.2", "port": "2222", "username": "new"}
+    assert decrypt(asyncio.run(fake.get("hs:cred:N1"))) == "old-pw"  # 未动
+
+    r = client.put("/api/nodes/N1/conn", json={
+        "hostname": "2.2.2.2", "username": "new", "password": "new-pw"})
+    assert r.json()["credential_updated"] is True
+    assert decrypt(asyncio.run(fake.get("hs:cred:N1"))) == "new-pw"
+
+    assert client.put("/api/nodes/NOPE/conn", json={
+        "hostname": "x", "username": "u"}).status_code == 404
