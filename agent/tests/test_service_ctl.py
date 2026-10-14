@@ -33,7 +33,9 @@ def test_docker_run_argv(captured, monkeypatch):
     assert "-p" in argv and "8000:8000" in argv
     assert "-w" in argv and "/models" in argv
     assert "-e" in argv and "HF_HOME=/hf" in argv
-    assert argv[-4:] == ["vllm/vllm-openai:latest", "sh", "-c",
+    # 覆盖镜像 entrypoint：vllm-openai 等镜像 ENTRYPOINT=["vllm","serve"] 会把 sh -c 吞成参数
+    assert "--entrypoint" in argv and argv[argv.index("--entrypoint") + 1] == "sh"
+    assert argv[-3:] == ["vllm/vllm-openai:latest", "-c",
                          "vllm serve /models/qwen3 --port 8000"]
 
 

@@ -106,11 +106,12 @@ async def start_docker(req: StartRequest) -> str:
         "docker", "run", "-d", "--name", name,
         "--restart", "unless-stopped",
         "--gpus", "all",
+        "--entrypoint", "sh",   # 覆盖镜像 ENTRYPOINT（vllm-openai 等镜像自带 entrypoint 会把命令吞成参数）
         "-p", f"{req.port}:{req.port}",
         "-w", req.workdir,
         *env_flags, *vol_flags,
         req.image,
-        "sh", "-c", req.start_cmd,
+        "-c", req.start_cmd,
     ], timeout=120.0)
     if rc != 0:
         raise HTTPException(500, f"docker run failed: {out[-400:]}")
