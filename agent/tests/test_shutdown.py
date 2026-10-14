@@ -127,3 +127,12 @@ def test_inst_status_crashing_transition(monkeypatch):
     monkeypatch.setattr(main, "container_state",
                         lambda name: asyncio.sleep(0, result=("running", 0)))
     assert asyncio.run(main._inst_status("m", "N:8000")) == "running"
+
+
+def test_heartbeat_ttl_is_int():
+    """回归：心跳 TTL 必须 int（redis EXPIRE 拒浮点，曾导致整条 pipeline 失败丢注册）。"""
+    from app import main as m
+    assert isinstance(int(m.settings.heartbeat_interval * 5), int)
+    import inspect, re
+    src = inspect.getsource(m.heartbeat_loop)
+    assert "int(settings.heartbeat_interval" in src

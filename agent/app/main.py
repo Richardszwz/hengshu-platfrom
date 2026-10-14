@@ -244,7 +244,7 @@ async def logs(name: str, tail: int = 100) -> dict:
 
 async def heartbeat_loop() -> None:
     r = redis()
-    ttl = settings.heartbeat_interval * 5
+    ttl = int(settings.heartbeat_interval * 5)  # 必须 int：redis EXPIRE 拒收浮点（整条 pipeline 会失败丢实例注册）
     node_key = f"hs:node:{settings.node_id}"
     tomb_key = f"hs:node_del:{settings.node_id}"
     while True:
