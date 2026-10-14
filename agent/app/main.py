@@ -106,6 +106,19 @@ async def healthz() -> dict:
 _INFLIGHT: set[str] = set()
 
 
+async def _watch_started(req: StartRequest) -> None:
+    """启动后巡检：15s / 2min 各查一次；容器没活就把日志尾部抓进节点系统日志。"""
+    for wait in (15, 105):
+        await asyncio.sleep(wait)
+        if await is_running(req.name):
+            return
+        lines = await ctl.logs(req.name, 12)
+        await _push_event("ERR", f"svc ▸ {req.name} 容器未存活（巡检 {wait}s），日志尾部：")
+        for ln in lines[-12:]:
+            await _push_event("ERR", f"  │ {ln[:300]}")
+        return
+
+
 async def _start_bg(req: StartRequest) -> None:
     """后台执行：拉镜像（可达数分钟）→ 起容器 → 登记实例。全程写事件流。"""
     service_ctl.progress_cb = _push_event  # 拉取进度 → 节点系统日志
@@ -123,6 +136,7 @@ async def _start_bg(req: StartRequest) -> None:
             INSTANCES.append(spec)
         _save_services()
         await _push_event("OK", f"svc ▸ {req.name} 启动完成: {result}")
+        asyncio.create_task(_watch_started(req))  # 巡检：崩溃即把容器日志抓进节点日志
     except Exception as e:  # noqa: BLE001
         await _push_event("ERR", f"svc ▸ {req.name} 启动失败: {e}")
 

@@ -69,3 +69,32 @@ def test_service_delete_deregisters(monkeypatch):
     assert [x["model"] for x in main.INSTANCES] == ["m2"]
     assert saved.get("ok")
     main.INSTANCES[:] = []
+
+
+def test_watch_started_captures_crash_logs(monkeypatch):
+    """巡检：容器未存活 → 日志尾部写事件流（节点系统日志）。"""
+    pushed = []
+
+    async def fake_push(level, msg):
+        pushed.append((level, msg))
+
+    async def fast_sleep(_):
+        return None
+
+    monkeypatch.setattr(main, "_push_event", fake_push)
+    monkeypatch.setattr(main.asyncio, "sleep", fast_sleep)
+    monkeypatch.setattr(main, "is_running", _false)
+    monkeypatch.setattr(main.ctl, "logs", _fake_logs)
+
+    req = main.StartRequest(name="m", start_cmd="x", port=8000)
+    asyncio.run(main._watch_started(req))
+    assert any("容器未存活" in m for _, m in pushed)
+    assert any("torch.OutOfMemoryError" in m for _, m in pushed)
+
+
+async def _false(_):
+    return False
+
+
+async def _fake_logs(name, tail):
+    return ["line1", "torch.OutOfMemoryError: CUDA out of memory"]

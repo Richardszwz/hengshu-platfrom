@@ -204,7 +204,7 @@ async def chat(req: ChatReq, x_session_id: str | None = Header(default=None),
 
 async def _proxy(inst: Instance, payload: dict, stream: bool):
     """非流式→收全 JSON；流式→攒迭代器（首包后即视为成功）。"""
-    client = httpx.AsyncClient(timeout=settings.upstream_timeout)
+    client = httpx.AsyncClient(timeout=settings.upstream_timeout, trust_env=False)  # 集群内网流量不走系统代理
     if not stream:
         r = await client.post(f"{inst.url}/v1/chat/completions", json=payload)
         r.raise_for_status()
