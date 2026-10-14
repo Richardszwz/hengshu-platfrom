@@ -26,7 +26,7 @@ from .collectors.tgi import TgiCollector
 from .collectors.vllm import VllmCollector
 from .config import settings
 from . import service_ctl
-from .service_ctl import ServiceCtl, StartRequest, is_running
+from .service_ctl import ServiceCtl, StartRequest, container_state, is_running
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("agent")
@@ -104,6 +104,31 @@ async def healthz() -> dict:
 
 
 _INFLIGHT: set[str] = set()
+
+
+_INST_STATUS: dict[str, str] = {}  # iid → 上次状态（崩溃转变时打事件）
+
+
+async def _inst_status(name: str, iid: str) -> str:
+    """实例状态三态：running / stopped / crashing（重启循环）。
+    转变为 crashing 时抓日志尾部打事件（前台节点系统日志可见）。"""
+    st, restarts = await container_state(name)
+    if st == "restarting" or (st == "running" and restarts >= 3):
+        status = "crashing"
+    elif st == "running":
+        status = "running"
+    elif st == "":
+        status = "stopped"
+    else:
+        status = "stopped"
+    prev = _INST_STATUS.get(iid)
+    if status == "crashing" and prev != "crashing":
+        lines = await ctl.logs(name, 8)
+        await _push_event("ERR", f"svc ▸ {name} 进入崩溃循环（重启 {restarts} 次），日志尾部：")
+        for ln in lines[-8:]:
+            await _push_event("ERR", f"  │ {ln[:300]}")
+    _INST_STATUS[iid] = status
+    return status
 
 
 async def _watch_started(req: StartRequest) -> None:
@@ -252,7 +277,7 @@ async def heartbeat_loop() -> None:
                 port = inst["port"]
                 iid = f"{settings.node_id}:{port}"
                 url = f"http://{host}:{port}"
-                status = "running" if await is_running(inst["model"]) else "stopped"
+                status = await _inst_status(inst["model"], iid)
                 sample = await _collect(inst, url)
                 merged = Sample(
                     gpu_util=sysm["gpu_util"] if sample.gpu_util == 0 else sample.gpu_util,

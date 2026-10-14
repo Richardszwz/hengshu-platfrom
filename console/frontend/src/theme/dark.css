@@ -196,6 +196,7 @@ body::after {
 .tag { display: inline-block; padding: 2px 8px; font-size: 11px; border: 1px solid var(--line); color: var(--cyan); }
 .tag.g { border-color: rgba(45, 255, 168, .4); color: var(--green); }
 .tag.w { border-color: rgba(255, 181, 69, .4); color: var(--amber); }
+.tag.r { border-color: rgba(255, 77, 106, .5); color: var(--red); }
 .mini-btn {
   font-size: 11px; color: var(--txt-dim); border: 1px solid var(--line); background: transparent;
   padding: 3px 10px; cursor: pointer; margin-right: 6px; transition: .2s; font-family: inherit;

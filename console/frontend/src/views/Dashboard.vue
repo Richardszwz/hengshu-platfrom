@@ -115,7 +115,8 @@
               <td><b style="color:#fff">{{ s.model }}</b></td>
               <td>{{ s.node }}</td>
               <td style="font-family:Rajdhani">{{ s.framework }}</td>
-              <td><span class="tag" :class="s.status === 'running' ? 'g' : 'w'">● {{ s.status === 'running' ? '运行中' : '已停止' }}</span></td>
+              <td><span class="tag" :class="s.status === 'running' ? 'g' : (s.status === 'crashing' ? 'r' : 'w')">
+                ● {{ s.status === 'running' ? '运行中' : (s.status === 'crashing' ? '崩溃循环' : '已停止') }}</span></td>
               <td style="font-family:Rajdhani">{{ s.metrics?.m_gpu_util ?? '—' }}%</td>
               <td style="font-family:Rajdhani">{{ s.metrics?.m_ttft ? Math.round(s.metrics.m_ttft) + 'ms' : '—' }}</td>
               <td style="font-family:Rajdhani;color:var(--cyan)">{{ s.metrics?.m_tps ? fmtNum(s.metrics.m_tps) : '—' }}</td>
@@ -200,8 +201,14 @@ let timer = 0
 
 /* ---------- 计算属性 ---------- */
 const events = computed(() => (summary.value?.events || []).slice(-16))
-const alerts = computed(() =>
-  (summary.value?.events || []).filter((e: any) => e.level === 'WARN' || e.level === 'ERROR').slice(-5))
+const alerts = computed(() => {
+  const evts = (summary.value?.events || []).filter((e: any) => e.level === 'WARN' || e.level === 'ERROR')
+  // 崩溃循环服务置顶告警（用户要求：报错要打到前台）
+  const crashing = services.value.filter(s => s.status === 'crashing').map(s => ({
+    level: 'ERROR', text: `服务 ${s.model}@${s.node} 崩溃循环中（重启多次）`, time: '现在',
+  }))
+  return [...crashing, ...evts].slice(-8)
+})
 const clusterOk = computed(() =>
   summary.value ? summary.value.nodes_online === summary.value.nodes_total : true)
 const runningCount = computed(() => services.value.filter(s => s.status === 'running').length)

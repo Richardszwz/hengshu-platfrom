@@ -98,3 +98,32 @@ async def _false(_):
 
 async def _fake_logs(name, tail):
     return ["line1", "torch.OutOfMemoryError: CUDA out of memory"]
+
+
+def test_inst_status_crashing_transition(monkeypatch):
+    """崩溃循环检测：restarting/重启>=3 → crashing，且转变时抓日志打事件（只打一次）。"""
+    pushed = []
+
+    async def fake_push(level, msg):
+        pushed.append(msg)
+
+    async def fake_logs(name, tail):
+        return ["torch.OutOfMemoryError: CUDA out of memory"]
+
+    monkeypatch.setattr(main, "_push_event", fake_push)
+    monkeypatch.setattr(main.ctl, "logs", fake_logs)
+    monkeypatch.setattr(main, "container_state",
+                        lambda name: asyncio.sleep(0, result=("restarting", 5)))
+
+    main._INST_STATUS.clear()
+    st = asyncio.run(main._inst_status("m", "N:8000"))
+    assert st == "crashing"
+    assert any("崩溃循环" in m for m in pushed)
+    # 持续崩溃不重复打
+    pushed.clear()
+    asyncio.run(main._inst_status("m", "N:8000"))
+    assert pushed == []
+    # 恢复 running
+    monkeypatch.setattr(main, "container_state",
+                        lambda name: asyncio.sleep(0, result=("running", 0)))
+    assert asyncio.run(main._inst_status("m", "N:8000")) == "running"

@@ -187,3 +187,22 @@ async def is_running(name: str) -> bool:
         return rc == 0 and out.strip() == "true"
     p = _procs.get(name)
     return p is not None and p.returncode is None
+
+
+async def container_state(name: str) -> tuple[str, int]:
+    """(docker State.Status, RestartCount)；崩溃循环 = restarting 或重启次数高。
+
+    非 docker 后端/容器不存在 → ("", 0)。
+    """
+    if _backend() != "docker":
+        return "", 0
+    rc, out = await _run(
+        ["docker", "inspect", "-f", "{{.State.Status}} {{.State.RestartCount}}",
+         f"hs-svc-{name}"], timeout=15.0)
+    if rc != 0 or not out.strip():
+        return "", 0
+    parts = out.split()
+    try:
+        return parts[0], int(parts[1])
+    except (IndexError, ValueError):
+        return parts[0] if parts else "", 0
