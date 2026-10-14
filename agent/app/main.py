@@ -25,6 +25,7 @@ from .collectors.trt import TrtCollector
 from .collectors.tgi import TgiCollector
 from .collectors.vllm import VllmCollector
 from .config import settings
+from . import service_ctl
 from .service_ctl import ServiceCtl, StartRequest, is_running
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -107,6 +108,7 @@ _INFLIGHT: set[str] = set()
 
 async def _start_bg(req: StartRequest) -> None:
     """后台执行：拉镜像（可达数分钟）→ 起容器 → 登记实例。全程写事件流。"""
+    service_ctl.progress_cb = _push_event  # 拉取进度 → 节点系统日志
     await _push_event("INFO", f"svc ▸ {req.name} 开始执行：拉取镜像 {req.image}（大镜像需数分钟）")
     try:
         result = await ctl.start(req)

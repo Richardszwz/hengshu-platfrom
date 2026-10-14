@@ -55,16 +55,38 @@ def _docker_available() -> bool:
     return shutil.which("docker") is not None
 
 
+# 拉镜像进度上报回调（main 注入，写节点系统日志）
+progress_cb = None
+
+
 async def start_docker(req: StartRequest) -> str:
     if not _docker_available():
         raise HTTPException(500, "docker CLI unavailable")
     name = f"hs-svc-{req.name}"
     if await is_running(req.name):
         return f"container {name} already running"
-    # 镜像不在本地则先拉取；气隙环境拉取失败也继续 run（镜像可能已离线装载）
+    # 镜像不在本地则先拉取（大镜像可达数十分钟：长超时 + 每分钟进度事件 + 超时自动续拉一次）
     rc, _ = await _run(["docker", "image", "inspect", req.image], timeout=15.0)
     if rc != 0:
-        prc, pout = await _run(["docker", "pull", req.image], timeout=600.0)
+        prc, pout = -1, ""
+        for attempt in (1, 2):
+            pull = asyncio.create_task(_run(["docker", "pull", req.image], timeout=3600.0))
+            await asyncio.sleep(0)  # 让即时完成的任务先落地（测试/已缓存场景）
+            waited = 0
+            while not pull.done():
+                await asyncio.sleep(60)
+                waited += 1
+                if progress_cb:
+                    await progress_cb("INFO", f"svc ▸ {req.name} 镜像拉取中… 已 {waited} 分钟（{req.image}）")
+            try:
+                prc, pout = pull.result()
+            except HTTPException as e:
+                if e.status_code == 504 and attempt == 1:
+                    if progress_cb:
+                        await progress_cb("WARN", f"svc ▸ {req.name} 拉取超时，续拉第 2 次（已完成层不丢）")
+                    continue
+                raise
+            break
         rc2, _ = await _run(["docker", "image", "inspect", req.image], timeout=15.0)
         if prc != 0 and rc2 != 0:
             raise HTTPException(502,
