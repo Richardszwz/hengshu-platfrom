@@ -197,7 +197,7 @@ async def container_state(name: str) -> tuple[str, int]:
     if _backend() != "docker":
         return "", 0
     rc, out = await _run(
-        ["docker", "inspect", "-f", "{{.State.Status}} {{.State.RestartCount}}",
+        ["docker", "inspect", "-f", "{{.State.Status}} {{.RestartCount}}",
          f"hs-svc-{name}"], timeout=15.0)
     if rc != 0 or not out.strip():
         return "", 0
