@@ -30,6 +30,14 @@ def client():
 
 
 def test_tenant_crud(client) -> None:
+    import asyncio
+    fake = app.dependency_overrides[deps.get]()
+    r = client.post("/api/tenants", json={"tenant_id": "team-idx", "qps_limit": 50})
+    assert r.status_code == 200
+    key1 = r.json()["api_key"]
+    assert key1.startswith("hs-tnt-")
+    # 反查索引：router 靠它认证租户 Key
+    assert asyncio.run(fake.hget("hs:tokens", key1)) == "team-idx"
     r = client.post("/api/tenants", json={"tenant_id": "team-a", "qps_limit": 20})
     assert r.status_code == 200
     assert r.json()["api_key"].startswith("hs-tnt-")

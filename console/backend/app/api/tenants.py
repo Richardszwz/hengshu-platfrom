@@ -42,13 +42,18 @@ async def create_tenant(req: TenantCreateReq, r=Depends(deps.get)) -> dict:
         "tokens_total": "0",
         "created": str(int(time.time())),
     })
+    # Router 认证反查索引：api_key → tenant_id
+    await r.hset("hs:tokens", api_key, req.tenant_id)
     return {"tenant_id": req.tenant_id, "api_key": api_key,
             "note": "api_key 仅本次返回，请妥善保存"}
 
 
 @router.delete("/{tenant_id}", dependencies=[Depends(require_role("operator"))])
 async def delete_tenant(tenant_id: str, r=Depends(deps.get)) -> dict:
-    deleted = await r.delete(f"{TENANT_PREFIX}{tenant_id}")
-    if not deleted:
+    t = await r.hgetall(f"{TENANT_PREFIX}{tenant_id}")
+    if not t:
         raise HTTPException(404, "tenant not found")
+    if t.get("api_key"):
+        await r.hdel("hs:tokens", t["api_key"])  # 清反查索引，Key 立即失效
+    await r.delete(f"{TENANT_PREFIX}{tenant_id}")
     return {"removed": tenant_id}
