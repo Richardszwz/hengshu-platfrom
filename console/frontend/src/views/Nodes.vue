@@ -270,6 +270,7 @@ const launch = reactive({ node: '', name: '', image: 'docker.1ms.run/vllm/vllm-o
 
 function openLaunch(n: any) {
   launch.node = n.node_id
+  launch.volText = n.models_mount || launch.volText  // 预填该节点历史模型卷挂载
   launchError.value = ''
   launchOpen.value = true
 }

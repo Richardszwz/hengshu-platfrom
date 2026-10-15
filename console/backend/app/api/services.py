@@ -87,6 +87,9 @@ async def launch_service(node_id: str, req: StartServiceReq, r=Depends(deps.get)
     scalar = {k: str(v) for k, v in spec.items() if k not in ("env", "volumes")}
     scalar["env_json"] = _json.dumps(req.env)
     scalar["volumes_json"] = _json.dumps(req.volumes)
+    if req.volumes:
+        # 记住该节点的模型卷挂载，下次启动对话框自动预填（防 X86 路径套到 Spark 这类错配）
+        await r.hset(f"hs:conn:{node_id}", "models_mount", req.volumes[0])
     await r.hset(f"{SPEC_PREFIX}{node_id}:{req.name}", mapping=scalar)
     return resp.json()
 

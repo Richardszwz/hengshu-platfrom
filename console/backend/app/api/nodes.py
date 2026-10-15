@@ -47,6 +47,7 @@ async def list_nodes(r=Depends(deps.get)) -> dict:
             "ssh_host": conn.get("host", ""),
             "ssh_port": int(conn.get("port", "22")),
             "ssh_user": conn.get("username", ""),
+            "models_mount": conn.get("models_mount", ""),
             "arch": h.get("arch", ""),
             "status": "online" if int(h.get("last_seen", "0")) > time.time() - 15 else "offline",
             "last_seen": int(h.get("last_seen", "0")),
