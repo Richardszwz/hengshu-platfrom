@@ -12,8 +12,7 @@ from fastapi import APIRouter, Depends
 
 from .. import deps
 from ..keys import (EVENTS_KEY, INST_PREFIX, NODE_PREFIX, SESS_PREFIX,
-                    SER_QPS_KEY, SER_TPS_KEY, SER_TTFT_KEY, SER_UTIL_PREFIX,
-                    STAT_REQ_KEY)
+                    SER_QPS_KEY, SER_TPS_KEY, SER_TTFT_KEY, SER_UTIL_PREFIX)
 from ..security import current_user
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"],
@@ -114,15 +113,10 @@ async def series(r=Depends(deps.get), points: int = _SERIES_CAP) -> dict:
     """
     now = time.time()
 
-    # --- QPS：Router 累计计数差分 ---
-    req = int(await r.get(STAT_REQ_KEY) or 0)
-    last_req = int(await r.get("hs:stat:last_req") or req)
-    last_ts = float(await r.get("hs:stat:last_ts") or now)
-    dt = max(now - last_ts, 0.5)
-    qps = round((req - last_req) / dt, 1)
+    # --- QPS：请求时间戳滑动窗口（近 10s 请求数/10——稀疏流量下也可见）---
+    reqts = [float(x) for x in await r.lrange("hs:stat:reqts", -600, -1)]
+    qps = round(len([t for t in reqts if t > now - 10]) / 10.0, 2)
     pipe = r.pipeline()
-    pipe.set("hs:stat:last_req", req)
-    pipe.set("hs:stat:last_ts", now)
 
     # --- 集群 TTFT / TPS / 节点 util 快照 ---
     inst_keys = await r.keys(f"{INST_PREFIX}*")

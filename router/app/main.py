@@ -107,7 +107,7 @@ async def _record_usage(tid: str, usage: dict) -> None:
 # ---------- OpenAI 兼容 ----------
 
 class ChatReq(BaseModel):
-    model: str
+    model: str = "auto"  # 缺省/“auto”/“*” → 全自动：规则命中走规则，否则全池按负载挑实例
     messages: list[dict]
     session_id: str | None = None
     stream: bool = False
@@ -125,12 +125,18 @@ async def healthz() -> dict:
 async def models(_: None = Depends(auth)) -> dict:
     names = await registry.all_models()
     return {"object": "list",
-            "data": [{"id": n, "object": "model", "created": 0, "owned_by": "hengshu"}
-                     for n in names]}
+            "data": ([{"id": "auto", "object": "model", "created": 0,
+                       "owned_by": "hengshu", "description": "不指定模型：按负载自动选择"}]
+                     + [{"id": n, "object": "model", "created": 0, "owned_by": "hengshu"}
+                        for n in names])}
 
 
 async def resolve_model(model: str, rule_type: str | None) -> str:
-    """规则路由：type 命中 hs:rules 映射则改写目标模型（可单测）。"""
+    """规则路由：type 命中 hs:rules 映射则改写目标模型（可单测）。
+
+    model 缺省/auto/* 表示不指定：规则命中 → 映射模型；否则原样返回 'auto'
+    （chat 里对 auto 走全池负载选择）。
+    """
     if rule_type:
         mapped = await redis().hget("hs:rules", rule_type)
         if mapped:
@@ -148,13 +154,23 @@ async def chat(req: ChatReq, x_session_id: str | None = Header(default=None),
         raise HTTPException(429, f"tenant '{ctx['tenant']}' QPS limit exceeded ({ctx['qps_limit']}/s)")
     sid = x_session_id or req.session_id or uuid.uuid4().hex
     await redis().incr(STAT_REQ_KEY)  # QPS 统计：由控制台按时间差分
+    # 请求时间戳流（控制台算滑动窗口 QPS——瞬时差分在稀疏流量下恒为 0）
+    _r0 = redis()
+    await _r0.rpush("hs:stat:reqts", str(time.time()))
+    await _r0.ltrim("hs:stat:reqts", -600, -1)
     # 规则路由：X-Type / body.type 命中 hs:rules 映射表则改写目标模型
     rule_type = x_type or req.type
     model = await resolve_model(req.model, rule_type)
-    candidates = await registry.candidates(model)
+    if model in ("", "auto", "*"):
+        candidates = await registry.all_instances()   # 不指定模型：全池按负载挑
+        if not candidates:
+            raise HTTPException(503, "no live instance in cluster"
+                                     + (f" (type '{rule_type}' 无规则映射)" if rule_type else ""))
+    else:
+        candidates = await registry.candidates(model)
     if not candidates:
         raise HTTPException(503, f"model '{model}' has no live instance"
-                                  + (f" (type '{rule_type}' 映射)" if rule_type and model != req.model else ""))
+                                 + (f" (type '{rule_type}' 映射)" if rule_type and model != req.model else ""))
 
     bound = await sessions.get_binding(sid)
     bound_id = bound[1] if bound and bound[0] == model else None
@@ -180,7 +196,7 @@ async def chat(req: ChatReq, x_session_id: str | None = Header(default=None),
         inst = pick(pool, bound_id)
         tried.add(inst.inst_id)
         # 上游真实模型名：实例注册的 served_model 优先（服务名 ≠ vllm --served-model-name 时改写，防上游 404）
-        payload["model"] = inst.served_model or model
+        payload["model"] = inst.served_model or inst.model
         try:
             resp = await _proxy(inst, payload, req.stream)
             await sessions.bind(sid, model, inst.inst_id)

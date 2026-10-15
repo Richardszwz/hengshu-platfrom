@@ -61,6 +61,27 @@ class Registry:
             ))
         return [i for i in out if i.alive]
 
+    async def all_instances(self) -> list[Instance]:
+        """全池活实例（auto 模式：不指定模型时按负载从中挑）。"""
+        keys = await self.r.keys(f"{INST_PREFIX}*")
+        out: list[Instance] = []
+        for k in keys:
+            h = await self.r.hgetall(k)
+            if not h:
+                continue
+            iid = k.removeprefix(INST_PREFIX)
+            node_id, _, port = iid.partition(":")
+            out.append(Instance(
+                node_id=node_id, port=int(port),
+                model=h.get("model", ""), framework=h.get("framework", ""),
+                url=h.get("url", f"http://{node_id}:{port}"),
+                status=h.get("status", "running"),
+                served_model=h.get("served_model", ""),
+                metrics={kk: _num(vv) for kk, vv in h.items()
+                         if kk.startswith("m_")},
+            ))
+        return [i for i in out if i.alive]
+
     async def all_models(self) -> list[str]:
         keys = await self.r.keys(f"{MODEL_PREFIX}*")
         return sorted(k.removeprefix(MODEL_PREFIX) for k in keys)

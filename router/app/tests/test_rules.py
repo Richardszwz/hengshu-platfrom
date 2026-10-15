@@ -58,3 +58,32 @@ def test_tenant_auth_and_rate_limit() -> None:
         await fake.delete("hs:rl:t1")
         assert await main._rate_ok("t1", 2) is True
     asyncio.run(run())
+
+
+def test_auto_model_pool():
+    """不指定模型：all_instances 汇总全池活实例；crashing/stopped 被过滤。"""
+    async def run():
+        fake = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        main._redis = fake
+        from app.registry import Registry
+        reg = Registry(fake)
+        await fake.hset("hs:inst:N1:8100", mapping={
+            "model": "A", "status": "running", "url": "http://n1:8100",
+            "served_model": "A-real"})
+        await fake.hset("hs:inst:N2:8100", mapping={
+            "model": "B", "status": "crashing", "url": "http://n2:8100"})
+        insts = await reg.all_instances()
+        assert len(insts) == 1 and insts[0].model == "A" and insts[0].served_model == "A-real"
+    asyncio.run(run())
+
+
+def test_resolve_model_auto_with_rule():
+    """auto + 规则命中 → 规则模型；auto 无规则 → 保持 auto（走全池）。"""
+    async def run():
+        fake = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        main._redis = fake
+        await fake.hset("hs:rules", "code", "Qwen3-Coder-30B")
+        assert await main.resolve_model("auto", "code") == "Qwen3-Coder-30B"
+        assert await main.resolve_model("auto", None) == "auto"
+        assert await main.resolve_model("auto", "unknown") == "auto"
+    asyncio.run(run())
