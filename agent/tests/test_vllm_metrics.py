@@ -42,7 +42,8 @@ def test_counter_delta_to_rate(monkeypatch):
     monkeypatch.setattr(V.httpx, "AsyncClient", lambda timeout: _Client(METRICS_1))
     c = V.VllmCollector()
     s1 = asyncio.run(c.collect("http://x:8000"))
-    assert s1.tokens_per_s == 0.0 and s1.ttft == 0.0  # 首样本无前值
+    assert s1.tokens_per_s == 0.0            # TPS 首样本无前值=0
+    assert s1.ttft == 100.0                  # TTFT 累计平均首样本即有值 1.0s/10=100ms
 
     monkeypatch.setattr(V.httpx, "AsyncClient", lambda timeout: _Client(METRICS_2))
     s2 = asyncio.run(c.collect("http://x:8000"))
