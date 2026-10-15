@@ -247,7 +247,7 @@ def test_node_logs_endpoint(client) -> None:
 
 
 def test_delete_service_clears_registry(client) -> None:
-    """删除服务：实例 key/模型集合/spec 全清（Agent 不可达时仅清登记也成立）。"""
+    """删除服务：实例 key/模型集合清掉，spec 保留作启动模板（Agent 不可达时仅清登记也成立）。"""
     import asyncio
     fake = app.dependency_overrides[deps.get]()
     asyncio.run(fake.hset("hs:node:N1", mapping={"last_seen": "9999999999"}))
@@ -259,7 +259,8 @@ def test_delete_service_clears_registry(client) -> None:
     assert r.status_code == 200 and r.json()["deleted"] == "qwen"
     assert asyncio.run(fake.keys("hs:inst:N1:*")) == []
     assert asyncio.run(fake.smembers("hs:model:qwen")) == set()
-    assert asyncio.run(fake.exists("hs:svcspec:N1:qwen")) == 0
+    # spec 保留作启动模板（删除服务后重建可在对话框自动回填调好的参数）
+    assert asyncio.run(fake.exists("hs:svcspec:N1:qwen")) == 1
 
 
 def test_update_conn(client) -> None:

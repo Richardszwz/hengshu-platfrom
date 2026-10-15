@@ -121,7 +121,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, reactive, ref } from 'vue'
+import { onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { api } from '../api/client'
 import AppLayout from '../components/AppLayout.vue'
 
@@ -267,13 +267,26 @@ const launchOpen = ref(false)
 const launchBusy = ref(false)
 const launchError = ref('')
 const launch = reactive({ node: '', name: '', image: 'docker.1ms.run/vllm/vllm-openai:latest', start_cmd: '', port: 8100, envText: '', volText: '' })
+const nodeSpecs = ref<any[]>([])  // 当前节点历史启动模板
 
 function openLaunch(n: any) {
   launch.node = n.node_id
   launch.volText = n.models_mount || launch.volText  // 预填该节点历史模型卷挂载
   launchError.value = ''
   launchOpen.value = true
+  // 拉取该节点历史启动模板（同名模型自动回填全部参数，调好的参数不再丢）
+  api.serviceSpecs(n.node_id).then((d: any) => { nodeSpecs.value = d.specs || [] }).catch(() => {})
 }
+
+watch(() => launch.name, (name: string) => {
+  const sp = nodeSpecs.value.find((s: any) => s.name === name)
+  if (!sp) return
+  launch.image = sp.image || launch.image
+  launch.start_cmd = sp.start_cmd || ''
+  launch.port = sp.port || 8100
+  launch.envText = Object.entries(sp.env || {}).map(([k, v]) => `${k}=${v}`).join('\n')
+  launch.volText = (sp.volumes || []).join('\n')
+})
 
 async function submitLaunch() {
   launchError.value = ''

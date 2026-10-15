@@ -61,6 +61,26 @@ async def _agent_addr(node_id: str, r) -> str:
     return h.get("agent_addr", f"http://{node_id}:9100")
 
 
+@router.get("/{node_id}/specs")
+async def list_specs(node_id: str, r=Depends(deps.get)) -> dict:
+    """该节点全部已存启动模板（对话框按模型名预填用）。"""
+    import json as _json
+    out = []
+    for k in await r.keys(f"{SPEC_PREFIX}{node_id}:*"):
+        h = await r.hgetall(k)
+        if not h:
+            continue
+        try:
+            env = _json.loads(h.get("env_json", "{}"))
+            vols = _json.loads(h.get("volumes_json", "[]"))
+        except ValueError:
+            env, vols = {}, []
+        out.append({"name": h.get("name", ""), "image": h.get("image", ""),
+                    "start_cmd": h.get("start_cmd", ""), "port": int(h.get("port", "8100")),
+                    "env": env, "volumes": vols})
+    return {"specs": sorted(out, key=lambda x: x["name"])}
+
+
 @router.post("/{node_id}/start", dependencies=[Depends(require_role("operator"))])
 async def launch_service(node_id: str, req: StartServiceReq, r=Depends(deps.get)) -> dict:
     """启动新服务（完整 StartRequest 下发 Agent），并持久化 spec 供重启复用。"""
@@ -104,7 +124,7 @@ async def stop_service(node_id: str, name: str, r=Depends(deps.get)) -> dict:
 
 @router.delete("/{node_id}/{name}", dependencies=[Depends(require_role("operator"))])
 async def delete_service(node_id: str, name: str, r=Depends(deps.get)) -> dict:
-    """删除服务：尽力停容器 → 清实例登记/模型集合/持久化 spec，列表彻底消失。"""
+    """删除服务：尽力停容器 → 清实例登记/模型集合。spec 保留作启动模板（重建时对话框预填用）。"""
     stopped = None
     try:
         addr = await _agent_addr(node_id, r)
@@ -121,7 +141,6 @@ async def delete_service(node_id: str, name: str, r=Depends(deps.get)) -> dict:
         for k in iid_keys:
             iid = k.removeprefix(INST_PREFIX)
             await r.srem(f"{MODEL_PREFIX}{name}", iid)
-    await r.delete(f"{SPEC_PREFIX}{node_id}:{name}")
     return {"deleted": name, "node": node_id, "agent": stopped}
 
 
