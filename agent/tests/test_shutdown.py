@@ -136,3 +136,10 @@ def test_heartbeat_ttl_is_int():
     import inspect, re
     src = inspect.getsource(m.heartbeat_loop)
     assert "int(settings.heartbeat_interval" in src
+
+
+def test_served_model_parse():
+    i = {"model": "svc-name", "start_cmd": "vllm serve /models/X --port 8100 --served-model-name Real-Name"}
+    assert main._served_model(i) == "Real-Name"
+    assert main._served_model({"model": "svc-name", "start_cmd": "vllm serve /models/X"}) == "svc-name"
+    assert main._served_model({"model": "svc-name", "start_cmd": "--served-model-name=Eq-Form"}) == "Eq-Form"

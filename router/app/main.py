@@ -176,6 +176,8 @@ async def chat(req: ChatReq, x_session_id: str | None = Header(default=None),
             break
         inst = pick(pool, bound_id)
         tried.add(inst.inst_id)
+        # 上游真实模型名：实例注册的 served_model 优先（服务名 ≠ vllm --served-model-name 时改写，防上游 404）
+        payload["model"] = inst.served_model or model
         try:
             resp = await _proxy(inst, payload, req.stream)
             await sessions.bind(sid, model, inst.inst_id)

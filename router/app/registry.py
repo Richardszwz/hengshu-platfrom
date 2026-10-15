@@ -19,6 +19,7 @@ class Instance:
     url: str                       # http://host:port
     status: str = "running"        # running | starting | stopped
     metrics: dict[str, Any] = field(default_factory=dict)
+    served_model: str = ""         # 上游真实 served-model-name（转发时改写 body.model）
 
     @property
     def inst_id(self) -> str:
@@ -54,6 +55,7 @@ class Registry:
                 framework=h.get("framework", ""),
                 url=h.get("url", f"http://{node_id}:{port}"),
                 status=h.get("status", "running"),
+                served_model=h.get("served_model", ""),
                 metrics={k: _num(v) for k, v in h.items()
                          if k.startswith("m_")},
             ))

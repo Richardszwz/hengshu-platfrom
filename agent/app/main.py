@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import socket
 import time
 
@@ -107,6 +108,12 @@ _INFLIGHT: set[str] = set()
 
 
 _INST_STATUS: dict[str, str] = {}  # iid → 上次状态（崩溃转变时打事件）
+
+
+def _served_model(inst: dict) -> str:
+    """从启动命令解析 --served-model-name（上游真实模型名）；缺省用服务名。"""
+    m = re.search(r"--served-model-name[=\s]+([^\s]+)", inst.get("start_cmd") or "")
+    return m.group(1) if m else inst.get("model", "")
 
 
 async def _inst_status(name: str, iid: str) -> str:
@@ -289,6 +296,7 @@ async def heartbeat_loop() -> None:
                     "model": inst["model"], "framework": inst["framework"],
                     "url": url, "status": status,
                     "node": settings.node_id, "port": str(port),
+                    "served_model": _served_model(inst),
                     **merged.as_metrics(),
                 })
                 pipe.expire(f"hs:inst:{iid}", ttl)
