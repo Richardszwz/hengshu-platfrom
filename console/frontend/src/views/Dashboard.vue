@@ -106,10 +106,10 @@
 
       <!-- 服务表 -->
       <div class="panel corner svc">
-        <div class="p-title">模型服务实例 <span class="sub">{{ services.length }} SERVICES · {{ runningCount }} RUNNING</span>
+        <div class="p-title">模型服务实例 <span class="sub">{{ services.length }} SERVICES · {{ runningCount }} RUNNING · 监视只读（操作在节点管理）</span>
         </div>
         <table class="hs-table">
-          <thead><tr><th>服务</th><th>节点</th><th>框架</th><th>状态</th><th>GPU</th><th>TTFT</th><th>TOKENS/S</th><th>操作</th></tr></thead>
+          <thead><tr><th>服务</th><th>节点</th><th>框架</th><th>状态</th><th>GPU</th><th>TTFT</th><th>TOKENS/S</th></tr></thead>
           <tbody>
             <tr v-for="s in services" :key="s.inst_id">
               <td><b style="color:#fff">{{ s.model }}</b></td>
@@ -120,13 +120,6 @@
               <td style="font-family:Rajdhani">{{ s.metrics?.m_gpu_util ?? '—' }}%</td>
               <td style="font-family:Rajdhani">{{ s.metrics?.m_ttft ? Math.round(s.metrics.m_ttft) + 'ms' : '—' }}</td>
               <td style="font-family:Rajdhani;color:var(--cyan)">{{ s.metrics?.m_tps ? fmtNum(s.metrics.m_tps) : '—' }}</td>
-              <td>
-                <button class="mini-btn" @click="openNode(nodeById(s.node))">详情</button>
-                <button class="mini-btn" @click="showLogs(s)">日志</button>
-                <button v-if="s.status === 'running'" class="mini-btn danger" @click="stop(s)">停止</button>
-                <button v-else class="mini-btn go" @click="start(s)">启动</button>
-                <button class="mini-btn danger" @click="delService(s)">删除</button>
-              </td>
             </tr>
           </tbody>
         </table>

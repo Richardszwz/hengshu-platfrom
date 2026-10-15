@@ -49,8 +49,12 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="n in nodes" :key="n.node_id">
-              <td class="id-cell">{{ n.node_id }}</td>
+            <template v-for="n in nodes" :key="n.node_id">
+            <tr>
+              <td class="id-cell">
+                <button class="exp-btn" @click="toggleExpand(n.node_id)">{{ expanded.has(n.node_id) ? '▾' : '▸' }}</button>
+                {{ n.node_id }}
+              </td>
               <td>{{ n.hostname }} <span class="dim" v-if="n.hostname">:{{ n.ssh_port || 22 }}</span></td>
               <td class="mono">{{ n.arch || '—' }}</td>
               <td>
@@ -58,7 +62,7 @@
                   <i></i>{{ n.status === 'online' ? '在线' : (n.status === 'pending' ? '待上线' : '离线') }}
                 </span>
               </td>
-              <td class="mono">{{ n.instances ?? 0 }}</td>
+              <td class="mono link" @click="toggleExpand(n.node_id)">{{ n.instances ?? 0 }}</td>
               <td class="dim">{{ fmtAgo(n.last_seen) }}</td>
               <td>
                 <button v-if="n.status === 'online'" class="op go" @click="openLaunch(n)">启动服务</button>
@@ -70,6 +74,38 @@
                 <button class="op danger" @click="remove(n)">删除</button>
               </td>
             </tr>
+            <!-- 展开：该节点的模型服务实例（监视 + 操作） -->
+            <tr v-if="expanded.has(n.node_id)" class="svc-expand">
+              <td colspan="7">
+                <table class="svc-sub" v-if="nodeServices(n.node_id).length">
+                  <thead><tr><th>服务</th><th>框架</th><th>状态</th><th>GPU</th><th>TTFT</th><th>TOKENS/S</th><th>操作</th></tr></thead>
+                  <tbody>
+                    <template v-for="s in nodeServices(n.node_id)" :key="s.inst_id">
+                    <tr>
+                      <td><b>{{ s.model }}</b></td>
+                      <td class="mono">{{ s.framework || '—' }}</td>
+                      <td><span class="st" :class="s.status === 'running' ? 'ok' : (s.status === 'crashing' ? 'bad' : 'wait')">
+                        <i></i>{{ s.status === 'running' ? '运行中' : (s.status === 'crashing' ? '崩溃循环' : '已停止') }}</span></td>
+                      <td class="mono">{{ s.metrics?.m_gpu_util ?? '—' }}%</td>
+                      <td class="mono">{{ s.metrics?.m_ttft ? Math.round(s.metrics.m_ttft) + 'ms' : '—' }}</td>
+                      <td class="mono">{{ s.metrics?.m_tps ? Math.round(s.metrics.m_tps) : '—' }}</td>
+                      <td>
+                        <button class="op" @click="svcToggleLogs(s)">{{ svcLogs[s.inst_id] ? '收起日志' : '日志' }}</button>
+                        <button v-if="s.status === 'running'" class="op warn" :disabled="svcBusy === s.inst_id" @click="svcStop(s)">停止</button>
+                        <button v-else class="op go" :disabled="svcBusy === s.inst_id" @click="svcStart(s)">启动</button>
+                        <button class="op danger" :disabled="svcBusy === s.inst_id" @click="svcDel(s)">删除</button>
+                      </td>
+                    </tr>
+                    <tr v-if="svcLogs[s.inst_id]">
+                      <td colspan="7"><pre class="svc-log">{{ svcLogs[s.inst_id].join('\n') }}</pre></td>
+                    </tr>
+                    </template>
+                  </tbody>
+                </table>
+                <div v-else class="dim" style="padding:10px 4px">该节点暂无模型服务 — 点「启动服务」下发一个</div>
+              </td>
+            </tr>
+            </template>
             <tr v-if="!nodes.length">
               <td colspan="7" class="empty">暂无节点 — 点击右上角「添加节点」开始纳管</td>
             </tr>
@@ -126,6 +162,10 @@ import { api } from '../api/client'
 import AppLayout from '../components/AppLayout.vue'
 
 const nodes = ref<any[]>([])
+const services = ref<any[]>([])            // 全量服务实例（按节点分组展示在展开行）
+const expanded = ref<Set<string>>(new Set())  // 展开的节点
+const svcLogs = ref<Record<string, string[]>>({})  // inst_id → 日志行
+const svcBusy = ref('')
 const showAdd = ref(false)
 const busy = ref(false)
 const installResult = ref<any>(null)
@@ -147,7 +187,43 @@ async function refresh() {
   try {
     const d = await api.nodes()
     nodes.value = d.nodes || []
+    const sd = await api.services()
+    services.value = sd.services || []
   } catch (e) { console.error(e) }
+}
+
+/* ---------- 节点展开：模型服务监视+操作 ---------- */
+function nodeServices(nid: string) {
+  return services.value.filter((s: any) => s.node === nid)
+}
+function toggleExpand(nid: string) {
+  const s = new Set(expanded.value)
+  if (s.has(nid)) s.delete(nid); else s.add(nid)
+  expanded.value = s
+}
+async function svcStop(s: any) {
+  svcBusy.value = s.inst_id
+  try { await api.stopService(s.node, s.model) } finally { svcBusy.value = '' }
+  refresh()
+}
+async function svcStart(s: any) {
+  svcBusy.value = s.inst_id
+  try { await api.startService(s.node, s.model) } finally { svcBusy.value = '' }
+  setTimeout(refresh, 3000)  // 受理制：容器异步拉起
+}
+async function svcDel(s: any) {
+  if (!confirm(`删除服务 ${s.model} @ ${s.node}？`)) return
+  svcBusy.value = s.inst_id
+  try { await api.deleteService(s.node, s.model) } finally { svcBusy.value = '' }
+  refresh()
+}
+async function svcToggleLogs(s: any) {
+  if (svcLogs.value[s.inst_id]) {
+    const m = { ...svcLogs.value }; delete m[s.inst_id]; svcLogs.value = m
+    return
+  }
+  const d = await api.serviceLogs(s.node, s.model, 60)
+  svcLogs.value = { ...svcLogs.value, [s.inst_id]: d.lines || [] }
 }
 
 function payload() {
@@ -330,6 +406,18 @@ onUnmounted(() => clearInterval(timer))
 </script>
 
 <style scoped>
+/* 节点展开：服务子表 */
+.exp-btn { background: none; border: 1px solid var(--line); color: var(--cyan); width: 18px; height: 18px;
+  line-height: 1; cursor: pointer; margin-right: 6px; font-size: 10px; padding: 0; }
+.link { cursor: pointer; color: var(--cyan); }
+.svc-expand > td { background: rgba(0, 229, 255, .03); padding: 10px 14px; }
+.svc-sub { width: 100%; border-collapse: collapse; }
+.svc-sub th { text-align: left; font-size: 10px; letter-spacing: 1px; color: var(--txt-dim);
+  border-bottom: 1px solid var(--line); padding: 4px 8px; }
+.svc-sub td { padding: 6px 8px; border-bottom: 1px dashed rgba(0, 229, 255, .08); font-size: 12px; }
+.svc-log { margin: 4px 0; max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-all;
+  background: rgba(0, 0, 0, .3); border: 1px solid var(--line); padding: 8px 10px;
+  font-size: 11px; line-height: 1.5; color: var(--txt-dim); }
 .add-panel { margin-bottom: 12px; }
 .form-grid {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 14px;
