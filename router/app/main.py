@@ -194,8 +194,10 @@ async def chat(req: ChatReq, x_session_id: str | None = Header(default=None),
                 media_type="text/event-stream",
             )
         except (httpx.HTTPError, json.JSONDecodeError) as e:
-            last_err = f"{inst.inst_id}: {e}"
-            await _event("WARN", f"retry ▸ sess#{sid[:8]} away from {inst.inst_id} ({e})")
+            last_err = f"{inst.inst_id}: {type(e).__name__} {e}"
+            log.warning("retry away from %s: %r (payload messages=%d, stream=%s)",
+                        inst.inst_id, e, len(payload.get("messages", [])), req.stream)
+            await _event("WARN", f"retry ▸ sess#{sid[:8]} away from {inst.inst_id} ({type(e).__name__} {e})")
             # 迁移：重放历史给下一实例
             hist = await sessions.history(sid)
             payload["messages"] = hist + req.messages if hist else req.messages
