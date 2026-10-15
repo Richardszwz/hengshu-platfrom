@@ -10,6 +10,7 @@ P0 的 Mock 说明：模拟节点的 /v1/chat/completions 由 scripts/mock_agent
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 
@@ -25,6 +26,8 @@ from .config import settings
 from .keys import EVENTS_KEY, STAT_REQ_KEY
 from .registry import Instance, Registry
 from .session import SessionStore
+
+log = logging.getLogger("router")
 
 app = FastAPI(title="衡枢 Router", version="0.1.0")
 _r: aioredis.Redis | None = None
@@ -193,7 +196,7 @@ async def chat(req: ChatReq, x_session_id: str | None = Header(default=None),
                 _sse_with_footer(resp, sid, inst.inst_id, ctx["tid"]),
                 media_type="text/event-stream",
             )
-        except (httpx.HTTPError, json.JSONDecodeError) as e:
+        except (httpx.HTTPError, json.JSONDecodeError, OSError) as e:  # OSError 覆盖 ConnectionResetError 等裸网络异常
             last_err = f"{inst.inst_id}: {type(e).__name__} {e}"
             log.warning("retry away from %s: %r (payload messages=%d, stream=%s)",
                         inst.inst_id, e, len(payload.get("messages", [])), req.stream)
