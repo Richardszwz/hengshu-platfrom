@@ -54,16 +54,13 @@ class VllmCollector:
 
         now = time.perf_counter()  # 进程内差分用 perf_counter（monotonic 在部分 Windows 环境被冻结）
         tps = 0.0
-        ttft_ms = 0.0
+        # TTFT：累计平均（sum/count）——窗口制在空闲期会归零，驾驶舱体验差
+        ttft_ms = (ttft_sum / ttft_cnt * 1000.0) if ttft_cnt > 0 else 0.0
         prev = _PREV.get(base_url)
         if prev is not None:
             dt = now - prev[0]
             if dt > 0:
                 tps = max(gen_total - prev[1], 0.0) / dt
-                dsum = ttft_sum - prev[2]
-                dcnt = ttft_cnt - prev[3]
-                if dcnt > 0 and dsum >= 0:
-                    ttft_ms = dsum / dcnt * 1000.0
         _PREV[base_url] = (now, gen_total, ttft_sum, ttft_cnt)
 
         return Sample(

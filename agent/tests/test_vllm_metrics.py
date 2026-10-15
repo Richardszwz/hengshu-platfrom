@@ -47,6 +47,6 @@ def test_counter_delta_to_rate(monkeypatch):
     monkeypatch.setattr(V.httpx, "AsyncClient", lambda timeout: _Client(METRICS_2))
     s2 = asyncio.run(c.collect("http://x:8000"))
     assert s2.tokens_per_s > 0                # 300 tok 增量 / 实测 dt
-    assert s2.ttft == 100.0                   # (1.5-1.0)s / (15-10) = 0.1s = 100ms
+    assert s2.ttft == 100.0                   # 累计平均 1.5s/15 = 100ms
     assert s2.sessions == 2 and s2.queue == 3.0
     V._PREV.clear()
