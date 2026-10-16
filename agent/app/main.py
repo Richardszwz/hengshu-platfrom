@@ -277,6 +277,12 @@ class NcclTestReq(BaseModel):
 @app.post("/nccl-test")
 async def nccl_test(req: NcclTestReq) -> dict:
     """多机 NCCL all_reduce 联通/带宽测试（本节点一侧）。限时 150s。"""
+    # 护栏：显存占用过高（模型服务在跑）时 NCCL 测试必 OOM，直接拒绝并给出指引
+    vram_pct = gpu_sample().get("vram", 0.0)
+    if vram_pct > 92:
+        msg = f"显存占用 {vram_pct}%（有模型服务在跑），NCCL 测试会 OOM——先停止该节点模型服务再测"
+        await _push_event("ERR", f"nccl ▸ 拒绝执行: {msg}")
+        return {"ok": False, "rank": req.rank, "tail": [msg]}
     await _push_event("INFO", f"nccl ▸ rank {req.rank}/{req.world} nic={req.nic} master={req.master_addr}")
     res = await netinfo.run_nccl_test(
         rank=req.rank, world=req.world, master_addr=req.master_addr,
