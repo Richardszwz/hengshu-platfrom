@@ -17,8 +17,20 @@
         </div>
         <div class="api-item">
           <span class="k">调用示例</span>
-          <pre class="mono curl">curl {{ apiBase }}/chat/completions \
-  -H "Authorization: Bearer sk-…" -H "Content-Type: application/json" \
+          <pre class="mono curl"># ① 全自动（推荐）：不带 model，按负载自动选择实例
+curl {{ apiBase }}/chat/completions \
+  -H "Authorization: Bearer ***" -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"user","content":"hi"}]}'
+
+# ② 规则路由：带 X-Type 头，命中规则映射到指定模型
+curl {{ apiBase }}/chat/completions \
+  -H "Authorization: Bearer ***" -H "Content-Type: application/json" \
+  -H "X-Type: code" \
+  -d '{"messages":[{"role":"user","content":"hi"}]}'
+
+# ③ 显式指定模型
+curl {{ apiBase }}/chat/completions \
+  -H "Authorization: Bearer ***" -H "Content-Type: application/json" \
   -d '{"model":"Qwen3-8B","messages":[{"role":"user","content":"hi"}]}'</pre>
         </div>
         <div class="api-item">
