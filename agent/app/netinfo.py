@@ -217,3 +217,52 @@ async def run_nccl_test(*, rank: int, world: int, master_addr: str,
         return {"ok": False, "rank": rank, "tail": [f"timeout {timeout}s"]}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "rank": rank, "tail": [f"{type(e).__name__}: {e}"]}
+
+
+# ---------------- 模型库（统一 /models 约定） ----------------
+
+async def list_models(host_dir: str) -> list[dict]:
+    """列宿主机模型目录（一次性容器挂载只读 ls）。返回 [{name, size_mb}]。"""
+    cmd = ("python3 -c \""
+           "import os,json;d='/m';"
+           "print(json.dumps([{'name':n,'size_mb':round(sum("
+           "os.path.getsize(os.path.join(r,f)) for r,_,fs in os.walk(os.path.join(d,n)) for f in fs"
+           ")/2**20)} for n in sorted(os.listdir(d)) if os.path.isdir(os.path.join(d,n))]))\"")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "run", "--rm", "-v", f"{host_dir}:/m:ro",
+            _AGENT_IMAGE, "sh", "-c", cmd,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=60.0)
+        for line in reversed(out.decode(errors="replace").strip().splitlines()):
+            line = line.strip()
+            if line.startswith("["):
+                return json.loads(line)
+        return []
+    except Exception as e:  # noqa: BLE001
+        log.warning("list_models failed: %s", e)
+        return []
+
+
+async def download_model(repo: str, host_dir: str, name: str,
+                         progress_cb=None, timeout: float = 7200.0) -> dict:
+    """在线拉取模型（modelscope，agent 镜像内临时 pip 安装）。"""
+    async def _log(m: str) -> None:
+        if progress_cb:
+            await progress_cb("INFO", m)
+    await _log(f"model ▸ 在线拉取 {repo} → {host_dir}/{name}（modelscope）")
+    cmd = ("pip install -q -i https://mirrors.aliyun.com/pypi/simple/ modelscope && "
+           f"modelscope download --model '{repo}' --local_dir '/m/{name}'")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "run", "--rm", "-v", f"{host_dir}:/m",
+            "--entrypoint", "sh", _AGENT_IMAGE, "-c", cmd,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        ok = proc.returncode == 0
+        tail = out.decode(errors="replace").strip().splitlines()
+        return {"ok": ok, "tail": tail[-6:]}
+    except asyncio.TimeoutError:
+        return {"ok": False, "tail": [f"timeout {timeout}s"]}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "tail": [f"{type(e).__name__}: {e}"]}

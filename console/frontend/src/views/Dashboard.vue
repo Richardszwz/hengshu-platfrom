@@ -593,11 +593,11 @@ onUnmounted(() => {
 .grid-c { display: grid; grid-template-columns: 1fr; gap: 12px; }  /* 事件流拉满整行 */
 
 /* ---------- 布局：主区 + 右侧事件流独占列 ---------- */
-.dash-wrap { display: flex; gap: 12px; align-items: flex-start; }
+.dash-wrap { display: flex; gap: 12px; align-items: stretch; }  /* 右列与主区同高（底部拉齐） */
 .dash-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
 .dash-main > * { margin: 0; }
-.dash-side { flex: 0 0 360px; width: 360px; max-width: 360px; position: sticky; top: 12px; }
-.ev-col { max-height: calc(100vh - 140px); display: flex; flex-direction: column; }
+.dash-side { flex: 0 0 360px; width: 360px; max-width: 360px; display: flex; }
+.ev-col { flex: 1; min-height: 400px; display: flex; flex-direction: column; }  /* 与主区同高、底部拉齐 */
 .ev-col .ev-box { flex: 1; min-height: 0; height: auto; overflow: auto; }  /* 纵横双向滚动：长日志横向划 */
 .ev-col .ev-line .m { overflow: visible; text-overflow: clip; }  /* 不截断，靠横滚看全 */
 

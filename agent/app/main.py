@@ -423,3 +423,31 @@ async def _collect(inst: dict, url: str) -> Sample:
 
 if __name__ == "__main__":
     uvicorn.run(app, host=settings.agent_host, port=settings.agent_port)
+
+
+class ModelsReq(BaseModel):
+    host_dir: str                  # 宿主机模型根目录（/models 约定的宿主侧）
+
+
+@app.post("/models/list")
+async def models_list(req: ModelsReq) -> dict:
+    return {"models": await netinfo.list_models(req.host_dir)}
+
+
+class ModelDlReq(BaseModel):
+    repo: str                      # modelscope 仓库名（如 Qwen/Qwen3-8B）
+    host_dir: str
+    name: str                      # 落地目录名（=服务名约定）
+
+
+@app.post("/models/download")
+async def models_download(req: ModelDlReq) -> dict:
+    """在线拉取模型（受理制：立即返回，进度进节点系统日志）。"""
+    async def _bg() -> None:
+        res = await netinfo.download_model(req.repo, req.host_dir, req.name,
+                                           progress_cb=_push_event)
+        await _push_event("OK" if res["ok"] else "ERR",
+                          f"model ▸ 拉取 {req.repo} {'完成' if res['ok'] else '失败'}: "
+                          + " / ".join(res["tail"][-2:])[:200])
+    asyncio.create_task(_bg())
+    return {"accepted": req.repo, "note": "拉取中（进度见节点系统日志）"}
