@@ -79,10 +79,10 @@
             <tr v-if="expanded.has(n.node_id)" class="svc-expand">
               <td colspan="7">
                 <div class="nic-row" v-if="n.nics?.length">
-                  <span class="nic-chip" :class="{ down: !nc.up }" v-for="nc in n.nics" :key="nc.name">
-                    {{ nc.name }} · {{ nc.ip }}<template v-if="nc.speed"> · {{ nc.speed }}Mb</template>
+                  <span class="nic-chip" :class="{ down: !nc.up, virt: nc.virtual }" v-for="nc in n.nics" :key="nc.name">
+                    {{ nc.name }} · {{ nc.ip || '未配IP' }}<template v-if="nc.speed"> · {{ nc.speed }}Mb</template>
                   </span>
-                  <span class="dim" style="font-size:11px">网卡（双网口节点在此选 NCCL 链路）</span>
+                  <span class="dim" style="font-size:11px">网卡（红色=未启用，灰色=虚拟；配置在「网络设置」）</span>
                 </div>
                 <div class="nic-row dim" v-else style="font-size:11px">网卡信息采集中（每分钟刷新）…</div>
                 <table class="svc-sub" v-if="nodeServices(n.node_id).length">
@@ -132,7 +132,7 @@
           {{ n.node_id }}<span class="dim"> {{ n.hostname }}</span>
           <select v-if="ncclSel.has(n.node_id)" v-model="ncclNics[n.node_id]" class="inp nccl-nic-sm">
             <option value="" disabled>选网卡</option>
-            <option v-for="nc in (n.nics || []).filter((x: any) => x.up)" :key="nc.name" :value="nc.name">
+            <option v-for="nc in (n.nics || []).filter((x: any) => x.up && x.ip)" :key="nc.name" :value="nc.name">
               {{ nc.name }} · {{ nc.ip }}</option>
           </select>
           <button v-if="ncclSel.has(n.node_id)" class="op" :disabled="ncclEnvBusy === n.node_id"
@@ -664,6 +664,7 @@ onUnmounted(() => clearInterval(timer))
 .nic-chip { border: 1px solid rgba(0,229,255,.35); color: var(--cyan); font-size: 11px;
   padding: 2px 8px; font-family: var(--mono); }
 .nic-chip.down { border-color: rgba(255,77,106,.4); color: var(--red); opacity: .7; }
+.nic-chip.virt { opacity: .45; }
 .nccl-form { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 8px 0; }
 .nccl-node { display: flex; gap: 6px; align-items: center; font-size: 12px; cursor: pointer; }
 .nccl-nic { width: 260px; }

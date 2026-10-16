@@ -22,12 +22,12 @@ _NIC_DUMP_CMD = (
     "python -c \""
     "import json,psutil;"
     "st=psutil.net_if_stats();ad=psutil.net_if_addrs();"
-    "print(json.dumps([{'name':n,'ip':a.address,"
+    "print(json.dumps([{'name':n,"
+    "'ip':next((a.address for a in ad.get(n,[]) if a.family.name=='AF_INET'),''),"
     "'speed':getattr(st.get(n),'speed',0) or 0,"
-    "'up':bool(getattr(st.get(n),'isup',False))}"
-    " for n,addrs in ad.items() for a in addrs if a.family.name=='AF_INET'"
-    " and not a.address.startswith(('127.','172.17.'))"   # 排除 loopback/docker0
-    " and not n.startswith(('veth','br-'))]))\""
+    "'up':bool(getattr(st.get(n),'isup',False)),"
+    "'virtual':n.startswith(('veth','br-','docker','lo','tailscale'))}"
+    " for n in st if n!='lo']))\""
 )
 
 
