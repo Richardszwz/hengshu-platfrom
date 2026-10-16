@@ -83,26 +83,13 @@ async def list_specs(node_id: str, r=Depends(deps.get)) -> dict:
 
 @router.post("/{node_id}/start", dependencies=[Depends(require_role("operator"))])
 async def launch_service(node_id: str, req: StartServiceReq, r=Depends(deps.get)) -> dict:
-    """启动新服务（完整 StartRequest 下发 Agent），并持久化 spec 供重启复用。"""
-    addr = await _agent_addr(node_id, r)
-    try:
-        async with httpx.AsyncClient(timeout=120.0, trust_env=False) as c:
-            resp = await c.post(f"{addr}/services/start", json=req.model_dump())
-    except httpx.HTTPError as e:
-        raise HTTPException(502, f"无法连接节点 Agent（{addr}）：{type(e).__name__} {e}") from e
-    if resp.status_code != 200:
-        raise HTTPException(resp.status_code, resp.text[:200])
+    """启动新服务：先存 spec，后台 ensure 模型（缺则他机拷贝/在线拉取）→ 就绪后下发 Agent。"""
     import json as _json
     import time as _time
+    import re as _re
     from ..keys import EVENTS_KEY
-    # 事件流留痕：下发受理（后续进度由 Agent 写：开始拉取/启动完成/失败）
-    async with r.pipeline() as p:
-        p.rpush(EVENTS_KEY, _json.dumps({
-            "ts": round(_time.time(), 3), "level": "INFO",
-            "msg": f"svc ▸ 控制台下发启动指令 {node_id}/{req.name}（异步受理）"},
-            ensure_ascii=False))
-        p.ltrim(EVENTS_KEY, -200, -1)
-        await p.execute()
+    from .. import model_dist
+
     spec = req.model_dump()
     scalar = {k: str(v) for k, v in spec.items() if k not in ("env", "volumes")}
     scalar["env_json"] = _json.dumps(req.env)
@@ -111,7 +98,41 @@ async def launch_service(node_id: str, req: StartServiceReq, r=Depends(deps.get)
         # 记住该节点的模型卷挂载，下次启动对话框自动预填（防 X86 路径套到 Spark 这类错配）
         await r.hset(f"hs:conn:{node_id}", "models_mount", req.volumes[0])
     await r.hset(f"{SPEC_PREFIX}{node_id}:{req.name}", mapping=scalar)
-    return resp.json()
+
+    async def _ensure_then_start() -> None:
+        # /models/<dir> 约定：从启动命令解析模型目录名；无引用则跳过分发
+        m = _re.search(r"/models/([^\s/:'\"]+)", req.start_cmd)
+        try:
+            if m:
+                src = await model_dist.ensure_model(r, node_id, m.group(1))
+                await model_dist._emit(r, "OK",
+                                       f"svc ▸ {node_id}/{req.name} 模型就绪（{src}），下发启动",
+                                       node=node_id)
+            addr = await _agent_addr(node_id, r)
+            async with httpx.AsyncClient(timeout=120.0, trust_env=False) as c:
+                await c.post(f"{addr}/services/start", json=req.model_dump())
+        except Exception as e:  # noqa: BLE001
+            await model_dist._emit(r, "ERR",
+                                   f"svc ▸ {node_id}/{req.name} 启动前准备失败: {e}",
+                                   node=node_id)
+
+    import asyncio as _aio
+    _aio.create_task(_ensure_then_start())
+    async with r.pipeline() as p:
+        p.rpush(EVENTS_KEY, _json.dumps({
+            "ts": round(_time.time(), 3), "level": "INFO",
+            "msg": f"svc ▸ 控制台受理 {node_id}/{req.name}（模型检查/分发 → 自动启动）"},
+            ensure_ascii=False))
+        p.ltrim(EVENTS_KEY, -200, -1)
+        await p.execute()
+    return {"accepted": req.name, "note": "模型检查/分发中，就绪后自动启动（进度见集群事件流）"}
+
+
+@router.get("/models/inventory")
+async def models_inventory(r=Depends(deps.get)) -> dict:
+    """集群模型清单：{节点: [模型目录...]}（/models 约定，Agent 实扫宿主机目录）。"""
+    from .. import model_dist
+    return {"inventory": await model_dist.inventory(r)}
 
 
 @router.post("/{node_id}/{name}/stop", dependencies=[Depends(require_role("operator"))])

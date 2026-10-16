@@ -85,6 +85,10 @@
                   <span class="dim" style="font-size:11px">网卡（红色=未启用，灰色=虚拟；配置在「网络设置」）</span>
                 </div>
                 <div class="nic-row dim" v-else style="font-size:11px">网卡信息采集中（每分钟刷新）…</div>
+                <div class="nic-row" v-if="(modelInv[n.node_id] || []).length">
+                  <span class="nic-chip" v-for="mdl in modelInv[n.node_id]" :key="mdl">{{ mdl }}</span>
+                  <span class="dim" style="font-size:11px">本机模型库（/models）</span>
+                </div>
                 <table class="svc-sub" v-if="nodeServices(n.node_id).length">
                   <thead><tr><th>服务</th><th>框架</th><th>状态</th><th>GPU</th><th>TTFT</th><th>TOKENS/S</th><th>操作</th></tr></thead>
                   <tbody>
@@ -259,6 +263,7 @@ import AppLayout from '../components/AppLayout.vue'
 
 const nodes = ref<any[]>([])
 const services = ref<any[]>([])            // 全量服务实例（按节点分组展示在展开行）
+const modelInv = ref<Record<string, string[]>>({})  // 节点 → 本机模型目录（/models）
 const expanded = ref<Set<string>>(new Set())  // 展开的节点
 const svcLogs = ref<Record<string, string[]>>({})  // inst_id → 日志行
 const svcBusy = ref('')
@@ -285,6 +290,8 @@ async function refresh() {
     nodes.value = d.nodes || []
     const sd = await api.services()
     services.value = sd.services || []
+    // 模型清单走 Agent 实扫较慢，不阻塞节点刷新
+    api.modelsInventory().then((mi: any) => { modelInv.value = mi.inventory || {} }).catch(() => {})
   } catch (e) { console.error(e) }
 }
 

@@ -59,6 +59,7 @@ export const api = {
     axios.post(`/api/services/${node}/start`, payload).then(r => r.data),
   serviceSpecs: (node: string) =>
     axios.get(`/api/services/${node}/specs`).then(r => r.data),
+  modelsInventory: () => axios.get('/api/services/models/inventory').then(r => r.data),
   stopService: (node: string, name: string) =>
     axios.post(`/api/services/${node}/${name}/stop`).then(r => r.data),
   deleteService: (node: string, name: string) =>
