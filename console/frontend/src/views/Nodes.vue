@@ -1,6 +1,7 @@
 <template>
   <AppLayout crumb-prefix="纳管" crumb-title="节点管理">
     <template #top-right>
+      <button class="live-btn" @click="openLaunch()">▶ 启动模型</button>
       <button class="live-btn" @click="showAdd = !showAdd">{{ showAdd ? '收起' : '＋ 添加节点' }}</button>
     </template>
 
@@ -65,7 +66,6 @@
               <td class="mono link" @click="toggleExpand(n.node_id)">{{ n.instances ?? 0 }}</td>
               <td class="dim">{{ fmtAgo(n.last_seen) }}</td>
               <td>
-                <button v-if="n.status === 'online'" class="op go" @click="openLaunch(n)">启动服务</button>
                 <button class="op" @click="reinstall(n)" :disabled="reinstalling === n.node_id">
                   {{ reinstalling === n.node_id ? '重装中…' : '重装' }}
                 </button>
@@ -215,11 +215,28 @@
       </div>
     </div>
 
-    <!-- 启动服务对话框（节点行触发，节点预选） -->
+    <!-- 启动模型对话框（顶部按钮触发，支持单/多节点） -->
     <div class="mask" :class="{ on: launchOpen }" @click="launchOpen = false"></div>
     <div class="launch-dialog panel" :class="{ open: launchOpen }">
-      <div class="p-title">启动新服务 <span class="sub">下发至 {{ launch.node }} · Docker 运行</span></div>
+      <div class="p-title">启动模型服务 <span class="sub">勾选节点（可多选）· 模型缺失自动分发（他机拷贝/在线拉取）</span></div>
       <div class="launch-body">
+        <div class="node-pick">
+          <label v-for="n in nodes.filter(x => x.status === 'online')" :key="n.node_id" class="nccl-node">
+            <input type="checkbox" :checked="launchNodes.has(n.node_id)" @change="toggleLaunchNode(n)" />
+            {{ n.node_id }}<span class="dim"> {{ n.hostname }}</span>
+            <select v-if="launchNodes.size > 1 && launchNodes.has(n.node_id)"
+                    v-model="launchNics[n.node_id]" class="inp nccl-nic-sm">
+              <option value="" disabled>NCCL 网卡</option>
+              <option v-for="nc in (n.nics || []).filter((x: any) => x.up && x.ip)" :key="nc.name" :value="nc.name">
+                {{ nc.name }} · {{ nc.ip }}</option>
+            </select>
+          </label>
+          <span v-if="!nodes.filter(x => x.status === 'online').length" class="dim">暂无在线节点</span>
+        </div>
+        <p v-if="launchNodes.size > 1" class="dim" style="font-size:11px;margin:2px 0">
+          多机模式：TP×{{ launchNodes.size }} 跨机并行（Ray 集群 + vllm tensor-parallel）· 首个勾选节点为入口（master）
+          · 每节点须选 NCCL 网卡（先完成 ①ping ②免密互通）
+        </p>
         <label>服务/模型名 <input v-model.trim="launch.name" class="inp" placeholder="如 Qwen3-8B" /></label>
         <label>镜像 <input v-model.trim="launch.image" class="inp" placeholder="docker.1ms.run/vllm/vllm-openai:latest（docker.io 不通就走镜像站前缀；arm64 节点填 GB10/Jetson 兼容镜像）" /></label>
         <label>启动命令 <input v-model.trim="launch.start_cmd" class="inp mono-inp"
@@ -230,6 +247,7 @@
         <label>卷挂载（每行 宿主机路径:容器路径[:ro]，模型权重必配）<textarea v-model="launch.volText" class="inp env-inp" rows="2"
           placeholder="/data/models:/models:ro"></textarea></label>
         <p v-if="launchError" class="err">{{ launchError }}</p>
+        <div v-for="(r, i) in launchResults" :key="i" class="dim" style="font-size:12px">{{ r }}</div>
       </div>
       <div class="launch-foot">
         <button class="mini-btn" @click="launchOpen = false">取消</button>
@@ -593,13 +611,36 @@ async function runNccl() {
   }
 }
 
-function openLaunch(n: any) {
-  launch.node = n.node_id
-  launch.volText = n.models_mount || launch.volText  // 预填该节点历史模型卷挂载
+function openLaunch(n?: any) {
+  launchNodes.value = n ? new Set([n.node_id]) : new Set()
+  if (n?.models_mount) launch.volText = n.models_mount
   launchError.value = ''
+  launchResults.value = []
   launchOpen.value = true
-  // 拉取该节点历史启动模板（同名模型自动回填全部参数，调好的参数不再丢）
-  api.serviceSpecs(n.node_id).then((d: any) => { nodeSpecs.value = d.specs || [] }).catch(() => {})
+  // 拉取全部在线节点历史启动模板（同名模型自动回填）
+  const online = nodes.value.filter((x: any) => x.status === 'online')
+  Promise.all(online.map((x: any) => api.serviceSpecs(x.node_id).catch(() => ({ specs: [] }))))
+    .then((rs: any[]) => { nodeSpecs.value = rs.flatMap((d: any) => d.specs || []) })
+}
+
+const launchNodes = ref<Set<string>>(new Set())
+const launchNics = ref<Record<string, string>>({})  // TP 模式：节点 → NCCL 网卡
+const launchResults = ref<string[]>([])
+
+function toggleLaunchNode(n: any) {
+  const s = new Set(launchNodes.value)
+  if (s.has(n.node_id)) {
+    s.delete(n.node_id)
+    const m = { ...launchNics.value }; delete m[n.node_id]; launchNics.value = m
+  } else {
+    s.add(n.node_id)
+    if (!launch.volText && n.models_mount) launch.volText = n.models_mount
+    // 默认选第一张可用网卡
+    const firstUp = (n.nics || []).find((x: any) => x.up && x.ip)
+    if (firstUp && !launchNics.value[n.node_id])
+      launchNics.value = { ...launchNics.value, [n.node_id]: firstUp.name }
+  }
+  launchNodes.value = s
 }
 
 watch(() => launch.name, (name: string) => {
@@ -614,8 +655,9 @@ watch(() => launch.name, (name: string) => {
 
 async function submitLaunch() {
   launchError.value = ''
+  launchResults.value = []
   const missing: string[] = []
-  if (!launch.node) missing.push('目标节点')
+  if (!launchNodes.value.size) missing.push('目标节点（勾选）')
   if (!launch.name) missing.push('服务/模型名')
   if (!launch.start_cmd) missing.push('启动命令')
   if (!launch.port) missing.push('服务端口')
@@ -629,21 +671,63 @@ async function submitLaunch() {
     if (m) env[m[1]] = m[2]
   }
   const volumes = launch.volText.split('\n').map(s => s.trim()).filter(s => /^\/[^:]+:\/[^:]+(:ro|:rw)?$/.test(s))
-    launchBusy.value = true
-  try {
-    await api.launchService(launch.node, {
-      name: launch.name, image: launch.image,
-      start_cmd: launch.start_cmd.replaceAll('{port}', String(launch.port)),
-      port: launch.port, workdir: '/workspace', env, volumes
-    })
-    launchOpen.value = false
-    // 不弹窗：进度走驾驶舱「集群事件流」（受理/拉镜像/成败都有事件）
-    refresh()
-  } catch (e: any) {
-    launchError.value = e?.response?.data?.detail || e?.message || '下发失败'
-  } finally {
+  launchBusy.value = true
+
+  // 多节点 = TP 跨机并行（Ray + vllm tensor-parallel-size=N）
+  if (launchNodes.value.size > 1) {
+    const noNic = [...launchNodes.value].filter(nid => !launchNics.value[nid])
+    if (noNic.length) {
+      launchError.value = `多机模式需为节点选 NCCL 网卡：${noNic.join('、')}`
+      launchBusy.value = false
+      return
+    }
+    const md = launch.start_cmd.match(/\/models\/([^\s/:'"]+)/)
+    if (!md) {
+      launchError.value = '启动命令须包含 /models/<模型目录> 路径（多机部署靠它分发模型）'
+      launchBusy.value = false
+      return
+    }
+    try {
+      const d = await api.multiStart({
+        name: launch.name, nodes: [...launchNodes.value], nics: launchNics.value,
+        model_dir: md[1], image: launch.image, port: launch.port, env })
+      launchResults.value = [`✓ 已受理 TP×${d.tp}（${d.note}）`]
+      launchOpen.value = false
+    } catch (e: any) {
+      launchResults.value = [`✗ ${e?.response?.data?.detail || e?.message || '下发失败'}`]
+    }
     launchBusy.value = false
+    refresh()
+    return
   }
+
+  // 单节点下发：卷挂载宿主侧自动换成该节点记住的 models_mount（防跨节点路径错配）
+  const results: string[] = []
+  for (const nid of launchNodes.value) {
+    const node = nodes.value.find((x: any) => x.node_id === nid)
+    let vols = volumes
+    const mm = node?.models_mount
+    if (mm && vols.length) {
+      const host = mm.split(':')[0]
+      vols = vols.map(v => { const p = v.split(':'); p[0] = host; return p.join(':') })
+    }
+    try {
+      const d = await api.launchService(nid, {
+        name: launch.name, image: launch.image,
+        start_cmd: launch.start_cmd.replaceAll('{port}', String(launch.port)),
+        port: launch.port, workdir: '/workspace', env, volumes: vols
+      })
+      results.push(`✓ ${nid} 已受理（${d.note || '模型检查/分发→自动启动'}）`)
+    } catch (e: any) {
+      results.push(`✗ ${nid} ${e?.response?.data?.detail || e?.message || '下发失败'}`)
+    }
+  }
+  launchResults.value = results
+  launchBusy.value = false
+  if (results.every(r => r.startsWith('✓'))) {
+    launchOpen.value = false  // 全成功直接关窗：进度走驾驶舱「集群事件流」
+  }
+  refresh()
 }
 
 onMounted(() => {

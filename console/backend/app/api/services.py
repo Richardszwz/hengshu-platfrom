@@ -162,6 +162,22 @@ async def delete_service(node_id: str, name: str, r=Depends(deps.get)) -> dict:
         for k in iid_keys:
             iid = k.removeprefix(INST_PREFIX)
             await r.srem(f"{MODEL_PREFIX}{name}", iid)
+    # TP 组：连带停掉各节点 ray 容器
+    grp = await r.get(f"hs:svcgroup:{name}")
+    if grp:
+        import asyncio as _aio
+        import json as _json
+        nodes = _json.loads(grp).get("nodes", [])
+
+        async def _ray_stop(nid: str) -> None:
+            try:
+                addr = await _agent_addr(nid, r)
+                async with httpx.AsyncClient(timeout=15.0, trust_env=False) as c:
+                    await c.post(f"{addr}/ray/stop/{name}")
+            except Exception:  # noqa: BLE001
+                pass
+        await _aio.gather(*(_ray_stop(n) for n in nodes))
+        await r.delete(f"hs:svcgroup:{name}")
     return {"deleted": name, "node": node_id, "agent": stopped}
 
 
@@ -195,3 +211,124 @@ async def service_logs(node_id: str, name: str, tail: int = 100,
     async with httpx.AsyncClient(timeout=10.0, trust_env=False) as c:
         resp = await c.get(f"{addr}/services/{name}/logs", params={"tail": tail})
     return resp.json()
+
+
+class MultiStartReq(BaseModel):
+    """多机 TP 并行启动：一个模型横跨多节点（Ray + vllm --tensor-parallel-size=N）。"""
+    name: str
+    nodes: list[str] = Field(min_length=2)          # 首个 = master（推理入口所在）
+    nics: dict[str, str] = {}                       # 节点 → 网卡名（NCCL/Ray 走该链路）
+    model_dir: str                                  # /models 下的目录名（各节点同名）
+    image: str = "docker.1ms.run/vllm/vllm-openai:latest"
+    port: int = 8100
+    env: dict[str, str] = {}
+
+
+@router.post("/multi-start", dependencies=[Depends(require_role("operator"))])
+async def multi_start(req: MultiStartReq, r=Depends(deps.get)) -> dict:
+    """受理制：模型分发 → Ray head/worker → 集齐 → master 起 vllm TP=N → 注册实例。"""
+    import asyncio as _aio
+    import json as _json
+    from .. import model_dist
+
+    async def _emit(level: str, msg: str) -> None:
+        await model_dist._emit(r, level, msg, node=req.nodes[0])
+
+    async def _bg() -> None:
+        world = len(req.nodes)
+        # ① 节点信息（agent 地址 + 网卡 IP）
+        infos: dict[str, dict] = {}
+        for nid in req.nodes:
+            addr = await _agent_addr(nid, r)
+            h = await r.hgetall(f"{NODE_PREFIX}{nid}")
+            try:
+                nics = _json.loads(h.get("nics", "[]"))
+            except ValueError:
+                nics = []
+            nic = req.nics.get(nid, "")
+            ip = next((x["ip"] for x in nics if x["name"] == nic and x.get("up")), "")
+            if not ip:
+                await _emit("ERR", f"multi ▸ {nid} 网卡 {nic} 无可用 IP，中止")
+                return
+            infos[nid] = {"addr": addr, "ip": ip, "nic": nic}
+        master = req.nodes[0]
+        m_ip = infos[master]["ip"]
+
+        # ② 模型分发（并行 ensure）
+        await _emit("INFO", f"multi ▸ {req.name} 模型分发检查 ×{world}（{req.model_dir}）")
+        try:
+            await _aio.gather(*(model_dist.ensure_model(r, nid, req.model_dir)
+                                for nid in req.nodes))
+        except Exception as e:  # noqa: BLE001
+            await _emit("ERR", f"multi ▸ 模型分发失败: {e}")
+            return
+
+        # ③ Ray：head 先起，worker 并行跟上
+        async def _ray(nid: str, role: str) -> dict:
+            info = infos[nid]
+            payload = {"name": req.name, "role": role, "image": req.image,
+                       "nic": info["nic"], "nic_ip": info["ip"],
+                       "master_addr": m_ip, "env": req.env}
+            try:
+                async with httpx.AsyncClient(timeout=120.0, trust_env=False) as c:
+                    return (await c.post(f"{info['addr']}/ray/start", json=payload)).json()
+            except Exception as e:  # noqa: BLE001
+                return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+        head = await _ray(master, "head")
+        if not head.get("ok"):
+            await _emit("ERR", f"multi ▸ ray head 启动失败: {head.get('error','')[:150]}")
+            return
+        await _emit("OK", f"multi ▸ ray head 已起 {master}({m_ip})")
+        workers = await _aio.gather(*(_ray(nid, "worker") for nid in req.nodes[1:]))
+        bad = [n for n, w in zip(req.nodes[1:], workers) if not w.get("ok")]
+        if bad:
+            await _emit("ERR", f"multi ▸ ray worker 失败节点: {bad}")
+            return
+
+        # ④ 等 ray 集齐 world 节点
+        for _ in range(24):
+            try:
+                async with httpx.AsyncClient(timeout=15.0, trust_env=False) as c:
+                    on = (await c.get(f"{infos[master]['addr']}/ray/nodes",
+                                      params={"name": req.name})).json().get("online", 0)
+            except Exception:  # noqa: BLE001
+                on = 0
+            if on >= world:
+                break
+            await _aio.sleep(5)
+        else:
+            await _emit("ERR", f"multi ▸ ray 集齐超时（{on}/{world}）")
+            return
+        await _emit("OK", f"multi ▸ ray 集群就绪 {world} 节点")
+
+        # ⑤ master 起 vllm TP=world（正常服务管控链路，实例注册不变）
+        tp_cmd = (f"vllm serve /models/{req.model_dir} --port {req.port} "
+                  f"--served-model-name {req.name} --tensor-parallel-size {world} "
+                  f"--distributed-executor-backend ray")
+        svc_env = dict(req.env)
+        svc_env.update({"VLLM_HOST_IP": m_ip,
+                        "NCCL_SOCKET_IFNAME": infos[master]["nic"]})
+        spec = {"name": req.name, "image": req.image, "start_cmd": tp_cmd,
+                "port": req.port, "workdir": "/workspace", "env": svc_env,
+                "volumes": [f"{model_dist.models_root(await r.hgetall(f'hs:conn:{master}'))}:/models:ro"]}
+        try:
+            async with httpx.AsyncClient(timeout=120.0, trust_env=False) as c:
+                resp = await c.post(f"{infos[master]['addr']}/services/start", json=spec)
+            if resp.status_code != 200:
+                raise RuntimeError(resp.text[:200])
+        except Exception as e:  # noqa: BLE001
+            await _emit("ERR", f"multi ▸ vllm 下发失败: {e}")
+            return
+        # 持久化 spec + TP 组档案（删除时连带清 ray 容器）
+        scalar = {k: str(v) for k, v in spec.items() if k not in ("env", "volumes")}
+        scalar["env_json"] = _json.dumps(spec["env"])
+        scalar["volumes_json"] = _json.dumps(spec["volumes"])
+        await r.hset(f"{SPEC_PREFIX}{master}:{req.name}", mapping=scalar)
+        await r.set(f"hs:svcgroup:{req.name}",
+                    _json.dumps({"nodes": req.nodes, "master": master}))
+        await _emit("OK", f"multi ▸ {req.name} TP×{world} 已受理（{master}:{req.port}，加载数分钟）")
+
+    _aio.create_task(_bg())
+    return {"accepted": req.name, "tp": len(req.nodes),
+            "note": f"TP×{len(req.nodes)} 部署中：分发→Ray→vllm（进度见集群事件流）"}

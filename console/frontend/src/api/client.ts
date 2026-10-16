@@ -57,6 +57,7 @@ export const api = {
   services: () => axios.get('/api/services').then(r => r.data),
   launchService: (node: string, payload: object) =>
     axios.post(`/api/services/${node}/start`, payload).then(r => r.data),
+  multiStart: (payload: object) => axios.post('/api/services/multi-start', payload).then(r => r.data),
   serviceSpecs: (node: string) =>
     axios.get(`/api/services/${node}/specs`).then(r => r.data),
   modelsInventory: () => axios.get('/api/services/models/inventory').then(r => r.data),

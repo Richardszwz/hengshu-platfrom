@@ -27,7 +27,7 @@ from .collectors.trt import TrtCollector
 from .collectors.tgi import TgiCollector
 from .collectors.vllm import VllmCollector
 from .config import settings
-from . import netinfo, service_ctl
+from . import netinfo, rayctl, service_ctl
 from .service_ctl import ServiceCtl, StartRequest, container_state, is_running
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -307,6 +307,42 @@ async def net_ping(req: NetPingReq) -> dict:
     await _push_event(lvl, f"net ▸ ping → {req.target_ip} "
                            + (f"loss={res.get('loss_pct')}% rtt={res.get('rtt_ms')}ms" if res["ok"]
                               else str(res.get("error", ""))[:120]))
+    return res
+
+
+class RayStartReq(BaseModel):
+    name: str                      # 模型/服务名（容器名 hs-ray-{role}-{name}）
+    role: str                      # head | worker
+    image: str
+    nic: str                       # NCCL_SOCKET_IFNAME
+    nic_ip: str                    # 本节点在该网卡上的 IP（ray --node-ip-address / VLLM_HOST_IP）
+    master_addr: str = ""          # worker 用：head 节点 IP
+    env: dict = {}
+
+
+@app.post("/ray/start")
+async def ray_start(req: RayStartReq) -> dict:
+    if req.role not in ("head", "worker"):
+        return {"ok": False, "error": "role 须为 head/worker"}
+    await _push_event("INFO", f"ray ▸ {req.role} 启动 {req.name}（nic={req.nic} ip={req.nic_ip}）")
+    res = await rayctl.ray_start(name=req.name, role=req.role, image=req.image,
+                                 nic=req.nic, nic_ip=req.nic_ip, env=req.env,
+                                 master_addr=req.master_addr)
+    await _push_event("OK" if res["ok"] else "ERR",
+                      f"ray ▸ {req.role} {req.name} " + ("已启动" if res["ok"] else f"失败: {res.get('error','')[:150]}"))
+    return res
+
+
+@app.get("/ray/nodes")
+async def ray_nodes(name: str) -> dict:
+    return {"online": await rayctl.ray_nodes_online(name)}
+
+
+@app.post("/ray/stop/{name}")
+async def ray_stop(name: str) -> dict:
+    res = await rayctl.ray_stop(name)
+    if res["stopped"]:
+        await _push_event("INFO", f"ray ▸ {name} 已停止（{','.join(res['stopped'])}）")
     return res
 
 
