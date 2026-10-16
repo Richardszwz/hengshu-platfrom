@@ -270,6 +270,8 @@ class NcclTestReq(BaseModel):
     master_port: int = 29500
     nic: str                       # NCCL_SOCKET_IFNAME
     image: str                     # 本机已有、自带 torch+NCCL 的镜像（vllm-openai）
+    cmd: str = ""                  # 自定义指令（覆盖默认 torchrun 行）
+    env: dict = {}                 # 附加环境变量
 
 
 @app.post("/nccl-test")
@@ -278,10 +280,59 @@ async def nccl_test(req: NcclTestReq) -> dict:
     await _push_event("INFO", f"nccl ▸ rank {req.rank}/{req.world} nic={req.nic} master={req.master_addr}")
     res = await netinfo.run_nccl_test(
         rank=req.rank, world=req.world, master_addr=req.master_addr,
-        master_port=req.master_port, nic=req.nic, image=req.image)
+        master_port=req.master_port, nic=req.nic, image=req.image,
+        cmd=req.cmd, env=req.env)
     lvl = "OK" if res["ok"] else "ERR"
     await _push_event(lvl, f"nccl ▸ rank {req.rank} 完成 ok={res['ok']}: "
                            + " / ".join(res["tail"][-2:])[:200])
+    return res
+
+
+class NetPingReq(BaseModel):
+    target_ip: str
+    count: int = 3
+
+
+@app.post("/net/ping")
+async def net_ping(req: NetPingReq) -> dict:
+    """连通性测试：host 网络容器 ping 目标网卡 IP（RoCE 链路预检）。"""
+    res = await netinfo.net_ping(req.target_ip, req.count)
+    lvl = "OK" if res["ok"] else "ERR"
+    await _push_event(lvl, f"net ▸ ping → {req.target_ip} "
+                           + (f"loss={res.get('loss_pct')}% rtt={res.get('rtt_ms')}ms" if res["ok"]
+                              else str(res.get("error", ""))[:120]))
+    return res
+
+
+class NicConfigReq(BaseModel):
+    name: str                      # 网卡名
+    ip_cidr: str = ""              # 如 10.0.0.5/24（空=不改 IP）
+    up: bool | None = None         # True=启用 / False=停用 / None=不动
+
+
+@app.post("/nic/config")
+async def nic_config(req: NicConfigReq) -> dict:
+    """配置宿主机网卡（设 IP / up/down），返回最新网卡清单。"""
+    res = await netinfo.nic_config(req.name, req.ip_cidr, req.up)
+    if res.get("ok"):
+        _NICS_CACHE[:] = res["nics"]
+    await _push_event("OK" if res.get("ok") else "ERR",
+                      f"nic ▸ {req.name} 配置 ip={req.ip_cidr or '-'} up={req.up}: "
+                      + ("完成" if res.get("ok") else str(res.get("error", ""))[:120]))
+    return res
+
+
+class NcclEnvReq(BaseModel):
+    image: str = "docker.1ms.run/vllm/vllm-openai:latest"
+
+
+@app.post("/nccl-env/deploy")
+async def nccl_env(req: NcclEnvReq) -> dict:
+    """NCCL 环境部署：镜像就位 + 容器内 torch.cuda/nccl 自检（进度进节点系统日志）。"""
+    await _push_event("INFO", f"nccl-env ▸ 部署开始 image={req.image}")
+    res = await netinfo.nccl_env_deploy(req.image, progress_cb=_push_event)
+    await _push_event("OK" if res["ok"] else "ERR",
+                      f"nccl-env ▸ {'部署完成 ' + res.get('detail', '') if res['ok'] else '部署失败: ' + res.get('error', '')[:150]}")
     return res
 
 

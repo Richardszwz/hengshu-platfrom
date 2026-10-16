@@ -223,19 +223,24 @@ async def remove_node(node_id: str, r=Depends(deps.get)) -> dict:
 
 class NcclTestIn(BaseModel):
     nodes: list[str] = Field(min_length=2)          # 参与节点（≥2）
-    nic: str                                        # 共同网卡名（如 eth0）
+    nics: dict[str, str] = {}                       # 节点 → 网卡名（异名双网口各自指定）
     image: str = "docker.1ms.run/vllm/vllm-openai:latest"  # 自带 torch+NCCL
     master_port: int = 29500
+    cmd: str = ""                                   # 自定义测试指令（覆盖默认 torchrun）
+    env: dict[str, str] = {}                        # 附加 NCCL_* 环境变量（RoCE 调参）
 
 
 @router.post("/nccl-test", dependencies=[Depends(require_role("operator"))])
 async def nccl_test(req: NcclTestIn, r=Depends(deps.get)) -> dict:
-    """多机 NCCL all_reduce 测试：master=首个节点，master_addr=该节点在所选网卡上的 IP。"""
+    """多机 NCCL all_reduce 测试：master=首个节点，master_addr=该节点在其所选网卡上的 IP。"""
     import asyncio as _aio
 
-    # 每节点解析：agent 地址 + 该网卡 IP
+    # 每节点解析：agent 地址 + 该节点所选网卡的 IP
     node_info: dict[str, dict] = {}
     for nid in req.nodes:
+        nic = req.nics.get(nid, "")
+        if not nic:
+            raise HTTPException(400, f"节点 {nid} 未指定网卡")
         h = await r.hgetall(f"{NODE_PREFIX}{nid}")
         conn = await r.hgetall(f"hs:conn:{nid}")
         addr = (f"http://{conn['host']}:9100" if conn.get("host")
@@ -247,25 +252,28 @@ async def nccl_test(req: NcclTestIn, r=Depends(deps.get)) -> dict:
         except ValueError:
             nics = []
         nic_ip = next((n["ip"] for n in nics
-                       if n["name"] == req.nic and n.get("up")), "")
+                       if n["name"] == nic and n.get("up")), "")
         if not nic_ip:
-            raise HTTPException(400, f"节点 {nid} 网卡 {req.nic} 不在线或不存在（先看节点网卡列表）")
-        node_info[nid] = {"addr": addr, "ip": nic_ip}
+            raise HTTPException(400, f"节点 {nid} 网卡 {nic} 不在线或不存在（先看节点网卡列表）")
+        node_info[nid] = {"addr": addr, "ip": nic_ip, "nic": nic}
 
     master_ip = node_info[req.nodes[0]]["ip"]
     world = len(req.nodes)
 
     async def _one(rank: int, nid: str) -> dict:
+        info = node_info[nid]
         payload = {"rank": rank, "world": world, "master_addr": master_ip,
-                   "master_port": req.master_port, "nic": req.nic, "image": req.image}
+                   "master_port": req.master_port, "nic": info["nic"], "image": req.image,
+                   "cmd": req.cmd, "env": req.env}
         try:
             async with httpx.AsyncClient(timeout=170.0, trust_env=False) as c:
-                resp = await c.post(f"{node_info[nid]['addr']}/nccl-test", json=payload)
+                resp = await c.post(f"{info['addr']}/nccl-test", json=payload)
                 d = resp.json()
         except Exception as e:  # noqa: BLE001
             d = {"ok": False, "tail": [f"{type(e).__name__}: {e}"]}
         d["node"] = nid
-        d["ip"] = node_info[nid]["ip"]
+        d["ip"] = info["ip"]
+        d["nic"] = info["nic"]
         return d
 
     results = await _aio.gather(*(_one(i, nid) for i, nid in enumerate(req.nodes)))
@@ -275,5 +283,136 @@ async def nccl_test(req: NcclTestIn, r=Depends(deps.get)) -> dict:
         for ln in x.get("tail", []):
             if "bus_bandwidth_GBps" in ln:
                 bw = ln.strip()
-    return {"ok": ok, "nic": req.nic, "master": req.nodes[0],
-            "master_ip": master_ip, "bandwidth": bw, "results": results}
+    return {"ok": ok, "master": req.nodes[0], "master_ip": master_ip,
+            "bandwidth": bw, "results": results}
+
+
+class NetTestIn(BaseModel):
+    nodes: list[str] = Field(min_length=2)
+    nics: dict[str, str] = {}     # 节点 → 网卡名（取该网卡 IP 作为 ping 目标）
+
+
+async def _node_agent_and_ip(r, nid: str, nic: str) -> tuple[str, str]:
+    h = await r.hgetall(f"{NODE_PREFIX}{nid}")
+    conn = await r.hgetall(f"hs:conn:{nid}")
+    addr = (f"http://{conn['host']}:9100" if conn.get("host") else h.get("agent_addr", ""))
+    if not addr:
+        raise HTTPException(400, f"节点 {nid} 无 Agent 地址（未上线）")
+    try:
+        nics = json.loads(h.get("nics", "[]"))
+    except ValueError:
+        nics = []
+    ip = next((n["ip"] for n in nics if n["name"] == nic and n.get("up")), "")
+    if not ip:
+        raise HTTPException(400, f"节点 {nid} 网卡 {nic} 不在线或不存在")
+    return addr, ip
+
+
+@router.post("/net-test", dependencies=[Depends(require_role("operator"))])
+async def net_test(req: NetTestIn, r=Depends(deps.get)) -> dict:
+    """连通性测试（ping）：master 与其余节点所选网卡 IP 逐对互 ping。先于 NCCL。"""
+    import asyncio as _aio
+    infos = {nid: await _node_agent_and_ip(r, nid, req.nics.get(nid, ""))
+             for nid in req.nodes}
+    pairs = [(a, b) for i, a in enumerate(req.nodes) for b in req.nodes[i + 1:]]
+    results = []
+
+    async def _ping(a: str, b: str) -> dict:
+        a_addr, _ = infos[a]
+        _, b_ip = infos[b]
+        try:
+            async with httpx.AsyncClient(timeout=60.0, trust_env=False) as c:
+                d = (await c.post(f"{a_addr}/net/ping", json={"target_ip": b_ip})).json()
+        except Exception as e:  # noqa: BLE001
+            d = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        d["dir"] = f"{a} → {b}"
+        return d
+
+    for a, b in pairs:
+        results += await _aio.gather(_ping(a, b), _ping(b, a))
+    return {"ok": all(x.get("ok") and not x.get("loss_pct") for x in results), "pairs": results}
+
+
+class SshMeshIn(BaseModel):
+    nodes: list[str] = Field(min_length=2)
+
+
+@router.post("/ssh-mesh", dependencies=[Depends(require_role("operator"))])
+async def ssh_mesh(req: SshMeshIn, r=Depends(deps.get)) -> dict:
+    """节点间免密互通：各节点生成 ed25519 密钥对，公钥互投到 authorized_keys。"""
+    import asyncssh
+    pubs: dict[str, str] = {}
+    errors: dict[str, str] = {}
+
+    async def _connect(nid: str):
+        conn = await r.hgetall(f"hs:conn:{nid}")
+        blob = await r.get(f"{CRED_PREFIX}{nid}")
+        if not conn.get("host") or not blob:
+            raise HTTPException(400, f"节点 {nid} 无连接信息/凭证")
+        secret = decrypt(blob)
+        kw = {"known_hosts": None, "login_timeout": 15}
+        if secret.startswith("-----BEGIN"):
+            kw["client_keys"] = [asyncssh.import_private_key(secret)]
+        else:
+            kw["password"] = secret
+        return await asyncssh.connect(conn["host"], port=int(conn.get("port", "22")),
+                                      username=conn.get("username", "root"), **kw)
+
+    for nid in req.nodes:
+        try:
+            async with await _connect(nid) as c:
+                await c.run("mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
+                            "([ -f ~/.ssh/id_ed25519 ] || ssh-keygen -t ed25519 -N '' "
+                            "-f ~/.ssh/id_ed25519 -q)", check=True)
+                pubs[nid] = (await c.run("cat ~/.ssh/id_ed25519.pub", check=True)).stdout.strip()
+        except Exception as e:  # noqa: BLE001
+            errors[nid] = f"{type(e).__name__}: {e}"
+    if len(pubs) < 2:
+        raise HTTPException(502, f"公钥收集失败: {errors}")
+
+    for nid in pubs:
+        try:
+            async with await _connect(nid) as c:
+                for pub in pubs.values():
+                    await c.run("touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && "
+                                f"(grep -qxF '{pub}' ~/.ssh/authorized_keys || "
+                                f"echo '{pub}' >> ~/.ssh/authorized_keys)", check=True)
+        except Exception as e:  # noqa: BLE001
+            errors[nid] = f"{type(e).__name__}: {e}"
+    return {"ok": not errors, "meshed": sorted(pubs), "errors": errors}
+
+
+@router.post("/{node_id}/nccl-env", dependencies=[Depends(require_role("operator"))])
+async def nccl_env(node_id: str, r=Depends(deps.get)) -> dict:
+    """NCCL 环境部署：转发 Agent（镜像就位+自检；拉镜像可能数十分钟）。"""
+    h = await r.hgetall(f"{NODE_PREFIX}{node_id}")
+    conn = await r.hgetall(f"hs:conn:{node_id}")
+    addr = (f"http://{conn['host']}:9100" if conn.get("host") else h.get("agent_addr", ""))
+    if not addr:
+        raise HTTPException(400, f"节点 {node_id} 无 Agent 地址（未上线）")
+    try:
+        async with httpx.AsyncClient(timeout=1900.0, trust_env=False) as c:
+            return (await c.post(f"{addr}/nccl-env/deploy", json={})).json()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"无法连接节点 Agent（{addr}）：{type(e).__name__} {e}") from e
+
+
+class NicConfigIn(BaseModel):
+    name: str
+    ip_cidr: str = ""
+    up: bool | None = None
+
+
+@router.post("/{node_id}/nic", dependencies=[Depends(require_role("operator"))])
+async def nic_config(node_id: str, req: NicConfigIn, r=Depends(deps.get)) -> dict:
+    """配置节点网卡（设 IP / up/down）：转发 Agent，回最新网卡清单。"""
+    h = await r.hgetall(f"{NODE_PREFIX}{node_id}")
+    conn = await r.hgetall(f"hs:conn:{node_id}")
+    addr = (f"http://{conn['host']}:9100" if conn.get("host") else h.get("agent_addr", ""))
+    if not addr:
+        raise HTTPException(400, f"节点 {node_id} 无 Agent 地址（未上线）")
+    try:
+        async with httpx.AsyncClient(timeout=60.0, trust_env=False) as c:
+            return (await c.post(f"{addr}/nic/config", json=req.model_dump())).json()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"无法连接节点 Agent（{addr}）：{type(e).__name__} {e}") from e

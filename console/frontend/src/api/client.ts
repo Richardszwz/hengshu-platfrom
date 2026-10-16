@@ -32,6 +32,11 @@ export const api = {
     axios.put(`/api/nodes/${nodeId}/conn`, payload).then(r => r.data),
   stopAgent: (nodeId: string) => axios.post(`/api/nodes/${nodeId}/stop-agent`).then(r => r.data),
   ncclTest: (payload: object) => axios.post('/api/nodes/nccl-test', payload).then(r => r.data),
+  netTest: (payload: object) => axios.post('/api/nodes/net-test', payload).then(r => r.data),
+  sshMesh: (payload: object) => axios.post('/api/nodes/ssh-mesh', payload).then(r => r.data),
+  ncclEnv: (nodeId: string) => axios.post(`/api/nodes/${nodeId}/nccl-env`).then(r => r.data),
+  setNic: (nodeId: string, payload: object) =>
+    axios.post(`/api/nodes/${nodeId}/nic`, payload).then(r => r.data),
   removeNode: (nodeId: string) => axios.delete(`/api/nodes/${nodeId}`).then(r => r.data),
   // 审计：事件流 + 终端录屏
   auditsEvents: () => axios.get('/api/audits/events').then(r => r.data),

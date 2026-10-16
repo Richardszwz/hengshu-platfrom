@@ -70,6 +70,7 @@
                   {{ reinstalling === n.node_id ? '重装中…' : '重装' }}
                 </button>
                 <button v-if="n.status === 'online'" class="op warn" @click="stopAgent(n)">停止Agent</button>
+                <button v-if="n.status === 'online'" class="op" @click="openNet(n)">网络设置</button>
                 <button class="op" @click="openConn(n)">改连接</button>
                 <button class="op danger" @click="remove(n)">删除</button>
               </td>
@@ -122,34 +123,92 @@
       <p class="svc-dim">提示：删除仅清除登记与凭证；目标机上的 Agent 容器需 SSH 手动 docker rm -f hengshu-agent</p>
     </div>
 
-    <!-- NCCL 多机联通/带宽测试 -->
+    <!-- 多机网络 & NCCL 测试（RoCE） -->
     <div class="panel corner" style="margin-top:12px">
-      <p class="p-title">NCCL 网络测试<span class="count">（多机模型部署前的链路验证）</span></p>
+      <p class="p-title">多机网络 &amp; NCCL 测试<span class="count">（RoCE 链路 · 多机模型部署前置）</span></p>
       <div class="nccl-form">
         <label v-for="n in nodes.filter(x => x.status === 'online')" :key="n.node_id" class="nccl-node">
           <input type="checkbox" :checked="ncclSel.has(n.node_id)" @change="toggleNccl(n.node_id)" />
           {{ n.node_id }}<span class="dim"> {{ n.hostname }}</span>
+          <select v-if="ncclSel.has(n.node_id)" v-model="ncclNics[n.node_id]" class="inp nccl-nic-sm">
+            <option value="" disabled>选网卡</option>
+            <option v-for="nc in (n.nics || []).filter((x: any) => x.up)" :key="nc.name" :value="nc.name">
+              {{ nc.name }} · {{ nc.ip }}</option>
+          </select>
+          <button v-if="ncclSel.has(n.node_id)" class="op" :disabled="ncclEnvBusy === n.node_id"
+                  @click="deployNcclEnv(n.node_id)">
+            {{ ncclEnvBusy === n.node_id ? '部署中…' : 'NCCL环境' }}</button>
         </label>
-        <select v-model="ncclNic" class="inp nccl-nic">
-          <option value="" disabled selected>选择链路网卡（各节点同名）</option>
-          <option v-for="nic in commonNics" :key="nic" :value="nic">{{ nic }}</option>
-        </select>
-        <button class="op go" :disabled="ncclRunning || ncclSel.size < 2 || !ncclNic" @click="runNccl">
-          {{ ncclRunning ? '测试执行中（最长约 3 分钟）…' : '开始测试' }}
-        </button>
+      </div>
+      <div class="nccl-form">
+        <button class="op" :disabled="!ncclReady || pingRunning" @click="runPing">
+          {{ pingRunning ? 'Ping 测试中…' : '① 连通性测试（Ping）' }}</button>
+        <button class="op" :disabled="ncclSel.size < 2 || meshRunning" @click="runMesh">
+          {{ meshRunning ? '互通配置中…' : '② 节点免密互通' }}</button>
+        <button class="op go" :disabled="ncclRunning || !ncclReady" @click="runNccl">
+          {{ ncclRunning ? 'NCCL 测试执行中…' : '③ NCCL 测试' }}</button>
+      </div>
+      <div class="nccl-form">
+        <input v-model.trim="ncclCmd" class="inp" style="flex:1;min-width:320px"
+               placeholder="自定义测试指令（留空=默认 torchrun all_reduce；可用 $RANK/$WORLD_SIZE/$MASTER_ADDR 环境变量）" />
+        <input v-model.trim="ncclEnvText" class="inp" style="flex:1;min-width:280px"
+               placeholder="附加环境变量，空格分隔：NCCL_IB_HCA=mlx5_0 NCCL_IB_GID_INDEX=3" />
+      </div>
+      <div v-if="pingResult" class="nccl-result" :class="{ bad: !pingResult.ok }">
+        <div class="nccl-head">{{ pingResult.ok ? '✓ 链路互通' : '✗ 存在不通链路' }}</div>
+        <div v-for="(p, i) in pingResult.pairs" :key="i" class="nccl-node-result">
+          <span class="st" :class="p.ok && !p.loss_pct ? 'ok' : 'bad'"><i></i>{{ p.ok && !p.loss_pct ? '通' : '不通' }}</span>
+          <b>{{ p.dir }}</b>
+          <span class="dim">{{ p.ok ? `loss=${p.loss_pct}% rtt=${p.rtt_ms ?? '—'}ms` : (p.error || '') }}</span>
+        </div>
+      </div>
+      <div v-if="meshResult" class="nccl-result" :class="{ bad: !meshResult.ok }">
+        <div class="nccl-head">{{ meshResult.ok ? '✓ 免密互通完成：' + meshResult.meshed.join(' ↔ ') : '✗ 部分失败' }}</div>
+        <div v-for="(err, nid) in meshResult.errors" :key="nid" class="dim">{{ nid }}: {{ err }}</div>
       </div>
       <div v-if="ncclResult" class="nccl-result" :class="{ bad: !ncclResult.ok }">
         <div class="nccl-head">
-          {{ ncclResult.ok ? '✓' : '✗' }} 链路 {{ ncclResult.nic }} · master {{ ncclResult.master }}({{ ncclResult.master_ip }})
+          {{ ncclResult.ok ? '✓' : '✗' }} master {{ ncclResult.master }}({{ ncclResult.master_ip }})
           <b v-if="ncclResult.bandwidth" style="color:var(--cyan)">{{ ncclResult.bandwidth }}</b>
         </div>
         <div v-for="r in ncclResult.results" :key="r.node" class="nccl-node-result">
           <span class="st" :class="r.ok ? 'ok' : 'bad'"><i></i>{{ r.ok ? '通过' : '失败' }}</span>
-          <b>{{ r.node }}</b> <span class="dim">{{ r.ip }}</span>
+          <b>{{ r.node }}</b> <span class="dim">{{ r.nic }} · {{ r.ip }}</span>
           <pre v-if="!r.ok" class="svc-log">{{ (r.tail || []).join('\n') }}</pre>
         </div>
       </div>
-      <p class="svc-dim">说明：各节点用本地 vllm 镜像（自带 NCCL）torchrun 跑 64MB all_reduce ×10；master 为首个勾选节点，通信走所选网卡的 IP。</p>
+      <p class="svc-dim">流程：选节点选网卡 → ① ping 验证所选网卡互通 → ② 免密互通（节点间 ssh 免密）→ ③ NCCL all_reduce（数据面 RoCE，NCCL_IB_* 在环境变量框配）。NCCL环境按钮=镜像就位+torch/nccl 自检。</p>
+    </div>
+
+    <!-- 网络设置对话框（节点行触发） -->
+    <div class="mask" :class="{ on: netOpen }" @click="netOpen = false"></div>
+    <div class="launch-dialog panel" :class="{ open: netOpen }">
+      <div class="p-title">网络设置 <span class="sub">{{ netNode?.node_id }} · 网卡配置（RoCE 链路）</span></div>
+      <div class="launch-body">
+        <table class="svc-sub" v-if="netNics.length">
+          <thead><tr><th>网卡</th><th>IP</th><th>速率</th><th>状态</th><th>配置</th></tr></thead>
+          <tbody>
+            <tr v-for="nc in netNics" :key="nc.name">
+              <td class="mono"><b>{{ nc.name }}</b></td>
+              <td class="mono">{{ nc.ip || '—' }}</td>
+              <td class="mono">{{ nc.speed ? nc.speed + 'Mb' : '—' }}</td>
+              <td><span class="st" :class="nc.up ? 'ok' : 'bad'"><i></i>{{ nc.up ? 'UP' : 'DOWN' }}</span></td>
+              <td>
+                <input v-model.trim="nicIps[nc.name]" class="inp nic-ip-inp" placeholder="IP/前缀，如 10.0.0.5/24" />
+                <button class="op go" :disabled="nicBusy" @click="applyNic(nc.name, true)">设IP并启用</button>
+                <button class="op" :disabled="nicBusy" @click="applyNic(nc.name, false, true)">仅设IP</button>
+                <button class="op" :disabled="nicBusy" @click="toggleNic(nc)">{{ nc.up ? '停用' : '启用' }}</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-else class="dim">网卡信息加载中…</div>
+        <p v-if="netMsg" class="err" :style="netMsg.startsWith('✓') ? 'color:var(--green)' : ''">{{ netMsg }}</p>
+      </div>
+      <div class="launch-foot">
+        <button class="mini-btn" @click="refreshNet">刷新</button>
+        <button class="mini-btn" @click="netOpen = false">关闭</button>
+      </div>
     </div>
 
     <!-- 启动服务对话框（节点行触发，节点预选） -->
@@ -382,33 +441,145 @@ const launchError = ref('')
 const launch = reactive({ node: '', name: '', image: 'docker.1ms.run/vllm/vllm-openai:latest', start_cmd: '', port: 8100, envText: '', volText: '' })
 const nodeSpecs = ref<any[]>([])  // 当前节点历史启动模板
 
+/* ---------- 网络设置对话框（节点行触发） ---------- */
+const netOpen = ref(false)
+const netNode = ref<any>(null)
+const netNics = ref<any[]>([])
+const nicIps = ref<Record<string, string>>({})
+const nicBusy = ref(false)
+const netMsg = ref('')
+
+function openNet(n: any) {
+  netNode.value = n
+  netNics.value = n.nics || []
+  nicIps.value = Object.fromEntries((n.nics || []).map((x: any) => [x.name, x.ip ? x.ip + '/24' : '']))
+  netMsg.value = ''
+  netOpen.value = true
+}
+
+async function refreshNet() {
+  await refresh()
+  const n = nodes.value.find((x: any) => x.node_id === netNode.value?.node_id)
+  if (n) netNics.value = n.nics || []
+}
+
+async function applyNic(name: string, bringUp: boolean, ipOnly = false) {
+  const ip = nicIps.value[name]
+  if (!ip) { netMsg.value = `✗ ${name} 请先填 IP/前缀`; return }
+  nicBusy.value = true
+  netMsg.value = ''
+  try {
+    const d = await api.setNic(netNode.value.node_id,
+      { name, ip_cidr: ip, up: ipOnly ? null : (bringUp || null) })
+    if (d.ok) {
+      netNics.value = d.nics
+      netMsg.value = `✓ ${name} 已配置 ${ip}`
+      refresh()  // 心跳里的网卡清单下一轮刷新
+    } else {
+      netMsg.value = `✗ ${name} 配置失败：${d.error}`
+    }
+  } catch (e: any) {
+    netMsg.value = `✗ ${e?.response?.data?.detail || e}`
+  } finally {
+    nicBusy.value = false
+  }
+}
+
+async function toggleNic(nc: any) {
+  nicBusy.value = true
+  netMsg.value = ''
+  try {
+    const d = await api.setNic(netNode.value.node_id, { name: nc.name, up: !nc.up })
+    if (d.ok) { netNics.value = d.nics; netMsg.value = `✓ ${nc.name} 已${nc.up ? '停用' : '启用'}`; refresh() }
+    else netMsg.value = `✗ ${d.error}`
+  } catch (e: any) {
+    netMsg.value = `✗ ${e?.response?.data?.detail || e}`
+  } finally {
+    nicBusy.value = false
+  }
+}
+
 /* ---------- NCCL 多机网络测试 ---------- */
 const ncclSel = ref<Set<string>>(new Set())
-const ncclNic = ref('')
+const ncclNics = ref<Record<string, string>>({})  // 节点 → 网卡名（异名双网口各自选）
 const ncclRunning = ref(false)
 const ncclResult = ref<any>(null)
 
-const commonNics = computed(() => {
-  const sel = nodes.value.filter((n: any) => ncclSel.value.has(n.node_id))
-  if (sel.length < 2) return []
-  const sets = sel.map((n: any) => new Set((n.nics || []).filter((x: any) => x.up).map((x: any) => x.name)))
-  return [...sets[0]].filter(x => sets.every(s => s.has(x)))
-})
+const ncclReady = computed(() =>
+  ncclSel.value.size >= 2 && [...ncclSel.value].every(nid => ncclNics.value[nid]))
+
+const pingRunning = ref(false)
+const pingResult = ref<any>(null)
+const meshRunning = ref(false)
+const meshResult = ref<any>(null)
+const ncclCmd = ref('')
+const ncclEnvText = ref('')
+const ncclEnvBusy = ref('')
+
+async function runPing() {
+  pingRunning.value = true
+  pingResult.value = null
+  try {
+    pingResult.value = await api.netTest({ nodes: [...ncclSel.value], nics: ncclNics.value })
+  } catch (e: any) {
+    pingResult.value = { ok: false, pairs: [], error: e?.response?.data?.detail || String(e) }
+  } finally {
+    pingRunning.value = false
+  }
+}
+
+async function runMesh() {
+  meshRunning.value = true
+  meshResult.value = null
+  try {
+    meshResult.value = await api.sshMesh({ nodes: [...ncclSel.value] })
+  } catch (e: any) {
+    meshResult.value = { ok: false, errors: { '': e?.response?.data?.detail || String(e) } }
+  } finally {
+    meshRunning.value = false
+  }
+}
+
+async function deployNcclEnv(nid: string) {
+  ncclEnvBusy.value = nid
+  try {
+    const d = await api.ncclEnv(nid)
+    alert(d.ok ? `✓ ${nid} NCCL 环境就绪：${d.detail}` : `✗ ${nid} 部署失败：${d.error}`)
+  } catch (e: any) {
+    alert(`✗ ${nid} 部署失败：${e?.response?.data?.detail || e}`)
+  } finally {
+    ncclEnvBusy.value = ''
+  }
+}
 
 function toggleNccl(nid: string) {
   const s = new Set(ncclSel.value)
-  if (s.has(nid)) s.delete(nid); else s.add(nid)
+  if (s.has(nid)) {
+    s.delete(nid)
+    const m = { ...ncclNics.value }; delete m[nid]; ncclNics.value = m
+  } else {
+    s.add(nid)
+    // 默认选该节点第一张 up 网卡
+    const n = nodes.value.find((x: any) => x.node_id === nid)
+    const firstUp = (n?.nics || []).find((x: any) => x.up)
+    if (firstUp && !ncclNics.value[nid]) ncclNics.value = { ...ncclNics.value, [nid]: firstUp.name }
+  }
   ncclSel.value = s
-  if (!commonNics.value.includes(ncclNic.value)) ncclNic.value = ''
 }
 
 async function runNccl() {
   ncclRunning.value = true
   ncclResult.value = null
+  const env: Record<string, string> = {}
+  for (const kv of ncclEnvText.value.split(/\s+/).filter(Boolean)) {
+    const i = kv.indexOf('=')
+    if (i > 0) env[kv.slice(0, i)] = kv.slice(i + 1)
+  }
   try {
-    ncclResult.value = await api.ncclTest({ nodes: [...ncclSel.value], nic: ncclNic.value })
+    ncclResult.value = await api.ncclTest({
+      nodes: [...ncclSel.value], nics: ncclNics.value, cmd: ncclCmd.value, env })
   } catch (e: any) {
-    ncclResult.value = { ok: false, nic: ncclNic.value, results: [],
+    ncclResult.value = { ok: false, results: [],
                          bandwidth: '', error: e?.response?.data?.detail || String(e) }
   } finally {
     ncclRunning.value = false
@@ -496,6 +667,8 @@ onUnmounted(() => clearInterval(timer))
 .nccl-form { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 8px 0; }
 .nccl-node { display: flex; gap: 6px; align-items: center; font-size: 12px; cursor: pointer; }
 .nccl-nic { width: 260px; }
+.nccl-nic-sm { width: 190px; margin-left: 6px; }
+.nic-ip-inp { width: 150px; margin-right: 6px; }
 .nccl-result { margin-top: 8px; border: 1px solid rgba(45,255,168,.3); padding: 10px 12px; font-size: 12px; }
 .nccl-result.bad { border-color: rgba(255,77,106,.4); }
 .nccl-head { margin-bottom: 6px; }

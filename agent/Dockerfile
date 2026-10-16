@@ -11,7 +11,7 @@ RUN set -e; \
     sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
     sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null || true; \
     ARCH=$([ "${TARGETARCH:-amd64}" = "arm64" ] && echo aarch64 || echo x86_64); \
-    apt-get update && apt-get install -y --no-install-recommends curl ca-certificates; \
+    apt-get update && apt-get install -y --no-install-recommends curl ca-certificates iputils-ping iproute2; \
     curl -fsSL "${DOCKER_MIRROR}/${ARCH}/docker-${DOCKER_VERSION}.tgz" | tar xz --strip-components=1 -C /usr/local/bin docker/docker; \
     docker --version; \
     apt-get purge -y curl; apt-get autoremove -y; rm -rf /var/lib/apt/lists/*
