@@ -14,6 +14,10 @@
   --txt-dim: #5f7f95;
   --txt-faint: #4a6a80;
   --panel-solid: #061426;
+  /* 对话框/表单用实体色别名（var(--card)/var(--border) 未定义时弹窗会透明） */
+  --card: #061426;
+  --border: rgba(0, 229, 255, .22);
+  --muted-foreground: #5f7f95;
   --mono: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace;
   --font-num: 'Rajdhani', 'Noto Sans SC', sans-serif;
 }
