@@ -15,8 +15,8 @@ import time
 import asyncssh
 import httpx
 
-from ..crypto import decrypt
-from ..keys import CRED_PREFIX, NODE_PREFIX
+from .crypto import decrypt
+from .keys import CRED_PREFIX, NODE_PREFIX
 
 log = logging.getLogger("hengshu.model_dist")
 
