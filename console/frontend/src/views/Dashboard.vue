@@ -596,9 +596,9 @@ onUnmounted(() => {
 .dash-wrap { display: flex; gap: 12px; align-items: stretch; }  /* 右列与主区同高（底部拉齐） */
 .dash-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
 .dash-main > * { margin: 0; }
-.dash-side { flex: 0 0 360px; width: 360px; max-width: 360px; display: flex; }
+.dash-side { flex: 0 0 360px; width: 360px; max-width: 360px; min-width: 0; display: flex; }
 /* 事件列：主区短时随主区拉齐；主区超长时吸附视口顶、高度封顶（不超过分辨率） */
-.ev-col { flex: 1; min-height: 400px; max-height: calc(100vh - 110px);
+.ev-col { flex: 1; min-width: 0; min-height: 400px; max-height: calc(100vh - 110px);
   display: flex; flex-direction: column; position: sticky; top: 12px; align-self: flex-start; }
 .ev-col .ev-box { flex: 1; min-height: 0; height: auto; overflow: auto; }  /* 纵横双向滚动：长日志横向划 */
 .ev-col .ev-line .m { overflow: visible; text-overflow: clip; }  /* 不截断，靠横滚看全 */
