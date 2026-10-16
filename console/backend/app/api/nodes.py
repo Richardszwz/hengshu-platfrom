@@ -49,6 +49,7 @@ async def list_nodes(r=Depends(deps.get)) -> dict:
             "ssh_user": conn.get("username", ""),
             "models_mount": conn.get("models_mount", ""),
             "arch": h.get("arch", ""),
+            "nics": json.loads(h.get("nics", "[]") or "[]"),
             "status": "online" if int(h.get("last_seen", "0")) > time.time() - 15 else "offline",
             "last_seen": int(h.get("last_seen", "0")),
             "instances": len(insts),
@@ -218,3 +219,61 @@ async def remove_node(node_id: str, r=Depends(deps.get)) -> dict:
     # 离线也写墓碑（防失联中的旧 Agent 突然恢复心跳复活）
     await r.set(f"hs:node_del:{node_id}", "1")
     return {"removed": node_id, "agent_notified": False}
+
+
+class NcclTestIn(BaseModel):
+    nodes: list[str] = Field(min_length=2)          # 参与节点（≥2）
+    nic: str                                        # 共同网卡名（如 eth0）
+    image: str = "docker.1ms.run/vllm/vllm-openai:latest"  # 自带 torch+NCCL
+    master_port: int = 29500
+
+
+@router.post("/nccl-test", dependencies=[Depends(require_role("operator"))])
+async def nccl_test(req: NcclTestIn, r=Depends(deps.get)) -> dict:
+    """多机 NCCL all_reduce 测试：master=首个节点，master_addr=该节点在所选网卡上的 IP。"""
+    import asyncio as _aio
+
+    # 每节点解析：agent 地址 + 该网卡 IP
+    node_info: dict[str, dict] = {}
+    for nid in req.nodes:
+        h = await r.hgetall(f"{NODE_PREFIX}{nid}")
+        conn = await r.hgetall(f"hs:conn:{nid}")
+        addr = (f"http://{conn['host']}:9100" if conn.get("host")
+                else h.get("agent_addr"))
+        if not addr:
+            raise HTTPException(400, f"节点 {nid} 无 Agent 地址（未上线）")
+        try:
+            nics = json.loads(h.get("nics", "[]"))
+        except ValueError:
+            nics = []
+        nic_ip = next((n["ip"] for n in nics
+                       if n["name"] == req.nic and n.get("up")), "")
+        if not nic_ip:
+            raise HTTPException(400, f"节点 {nid} 网卡 {req.nic} 不在线或不存在（先看节点网卡列表）")
+        node_info[nid] = {"addr": addr, "ip": nic_ip}
+
+    master_ip = node_info[req.nodes[0]]["ip"]
+    world = len(req.nodes)
+
+    async def _one(rank: int, nid: str) -> dict:
+        payload = {"rank": rank, "world": world, "master_addr": master_ip,
+                   "master_port": req.master_port, "nic": req.nic, "image": req.image}
+        try:
+            async with httpx.AsyncClient(timeout=170.0, trust_env=False) as c:
+                resp = await c.post(f"{node_info[nid]['addr']}/nccl-test", json=payload)
+                d = resp.json()
+        except Exception as e:  # noqa: BLE001
+            d = {"ok": False, "tail": [f"{type(e).__name__}: {e}"]}
+        d["node"] = nid
+        d["ip"] = node_info[nid]["ip"]
+        return d
+
+    results = await _aio.gather(*(_one(i, nid) for i, nid in enumerate(req.nodes)))
+    ok = all(x.get("ok") for x in results)
+    bw = ""
+    for x in results:
+        for ln in x.get("tail", []):
+            if "bus_bandwidth_GBps" in ln:
+                bw = ln.strip()
+    return {"ok": ok, "nic": req.nic, "master": req.nodes[0],
+            "master_ip": master_ip, "bandwidth": bw, "results": results}

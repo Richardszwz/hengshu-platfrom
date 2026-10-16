@@ -74,9 +74,16 @@
                 <button class="op danger" @click="remove(n)">删除</button>
               </td>
             </tr>
-            <!-- 展开：该节点的模型服务实例（监视 + 操作） -->
+            <!-- 展开：网卡 + 该节点的模型服务实例（监视 + 操作） -->
             <tr v-if="expanded.has(n.node_id)" class="svc-expand">
               <td colspan="7">
+                <div class="nic-row" v-if="n.nics?.length">
+                  <span class="nic-chip" :class="{ down: !nc.up }" v-for="nc in n.nics" :key="nc.name">
+                    {{ nc.name }} · {{ nc.ip }}<template v-if="nc.speed"> · {{ nc.speed }}Mb</template>
+                  </span>
+                  <span class="dim" style="font-size:11px">网卡（双网口节点在此选 NCCL 链路）</span>
+                </div>
+                <div class="nic-row dim" v-else style="font-size:11px">网卡信息采集中（每分钟刷新）…</div>
                 <table class="svc-sub" v-if="nodeServices(n.node_id).length">
                   <thead><tr><th>服务</th><th>框架</th><th>状态</th><th>GPU</th><th>TTFT</th><th>TOKENS/S</th><th>操作</th></tr></thead>
                   <tbody>
@@ -113,6 +120,36 @@
         </table>
       </div>
       <p class="svc-dim">提示：删除仅清除登记与凭证；目标机上的 Agent 容器需 SSH 手动 docker rm -f hengshu-agent</p>
+    </div>
+
+    <!-- NCCL 多机联通/带宽测试 -->
+    <div class="panel corner" style="margin-top:12px">
+      <p class="p-title">NCCL 网络测试<span class="count">（多机模型部署前的链路验证）</span></p>
+      <div class="nccl-form">
+        <label v-for="n in nodes.filter(x => x.status === 'online')" :key="n.node_id" class="nccl-node">
+          <input type="checkbox" :checked="ncclSel.has(n.node_id)" @change="toggleNccl(n.node_id)" />
+          {{ n.node_id }}<span class="dim"> {{ n.hostname }}</span>
+        </label>
+        <select v-model="ncclNic" class="inp nccl-nic">
+          <option value="" disabled selected>选择链路网卡（各节点同名）</option>
+          <option v-for="nic in commonNics" :key="nic" :value="nic">{{ nic }}</option>
+        </select>
+        <button class="op go" :disabled="ncclRunning || ncclSel.size < 2 || !ncclNic" @click="runNccl">
+          {{ ncclRunning ? '测试执行中（最长约 3 分钟）…' : '开始测试' }}
+        </button>
+      </div>
+      <div v-if="ncclResult" class="nccl-result" :class="{ bad: !ncclResult.ok }">
+        <div class="nccl-head">
+          {{ ncclResult.ok ? '✓' : '✗' }} 链路 {{ ncclResult.nic }} · master {{ ncclResult.master }}({{ ncclResult.master_ip }})
+          <b v-if="ncclResult.bandwidth" style="color:var(--cyan)">{{ ncclResult.bandwidth }}</b>
+        </div>
+        <div v-for="r in ncclResult.results" :key="r.node" class="nccl-node-result">
+          <span class="st" :class="r.ok ? 'ok' : 'bad'"><i></i>{{ r.ok ? '通过' : '失败' }}</span>
+          <b>{{ r.node }}</b> <span class="dim">{{ r.ip }}</span>
+          <pre v-if="!r.ok" class="svc-log">{{ (r.tail || []).join('\n') }}</pre>
+        </div>
+      </div>
+      <p class="svc-dim">说明：各节点用本地 vllm 镜像（自带 NCCL）torchrun 跑 64MB all_reduce ×10；master 为首个勾选节点，通信走所选网卡的 IP。</p>
     </div>
 
     <!-- 启动服务对话框（节点行触发，节点预选） -->
@@ -157,7 +194,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { onMounted, onUnmounted, reactive, ref, watch, computed } from 'vue'
 import { api } from '../api/client'
 import AppLayout from '../components/AppLayout.vue'
 
@@ -345,6 +382,39 @@ const launchError = ref('')
 const launch = reactive({ node: '', name: '', image: 'docker.1ms.run/vllm/vllm-openai:latest', start_cmd: '', port: 8100, envText: '', volText: '' })
 const nodeSpecs = ref<any[]>([])  // 当前节点历史启动模板
 
+/* ---------- NCCL 多机网络测试 ---------- */
+const ncclSel = ref<Set<string>>(new Set())
+const ncclNic = ref('')
+const ncclRunning = ref(false)
+const ncclResult = ref<any>(null)
+
+const commonNics = computed(() => {
+  const sel = nodes.value.filter((n: any) => ncclSel.value.has(n.node_id))
+  if (sel.length < 2) return []
+  const sets = sel.map((n: any) => new Set((n.nics || []).filter((x: any) => x.up).map((x: any) => x.name)))
+  return [...sets[0]].filter(x => sets.every(s => s.has(x)))
+})
+
+function toggleNccl(nid: string) {
+  const s = new Set(ncclSel.value)
+  if (s.has(nid)) s.delete(nid); else s.add(nid)
+  ncclSel.value = s
+  if (!commonNics.value.includes(ncclNic.value)) ncclNic.value = ''
+}
+
+async function runNccl() {
+  ncclRunning.value = true
+  ncclResult.value = null
+  try {
+    ncclResult.value = await api.ncclTest({ nodes: [...ncclSel.value], nic: ncclNic.value })
+  } catch (e: any) {
+    ncclResult.value = { ok: false, nic: ncclNic.value, results: [],
+                         bandwidth: '', error: e?.response?.data?.detail || String(e) }
+  } finally {
+    ncclRunning.value = false
+  }
+}
+
 function openLaunch(n: any) {
   launch.node = n.node_id
   launch.volText = n.models_mount || launch.volText  // 预填该节点历史模型卷挂载
@@ -418,6 +488,19 @@ onUnmounted(() => clearInterval(timer))
 .svc-log { margin: 4px 0; max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-all;
   background: rgba(0, 0, 0, .3); border: 1px solid var(--line); padding: 8px 10px;
   font-size: 11px; line-height: 1.5; color: var(--txt-dim); }
+/* 网卡 chips + NCCL 测试 */
+.nic-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 10px; }
+.nic-chip { border: 1px solid rgba(0,229,255,.35); color: var(--cyan); font-size: 11px;
+  padding: 2px 8px; font-family: var(--mono); }
+.nic-chip.down { border-color: rgba(255,77,106,.4); color: var(--red); opacity: .7; }
+.nccl-form { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 8px 0; }
+.nccl-node { display: flex; gap: 6px; align-items: center; font-size: 12px; cursor: pointer; }
+.nccl-nic { width: 260px; }
+.nccl-result { margin-top: 8px; border: 1px solid rgba(45,255,168,.3); padding: 10px 12px; font-size: 12px; }
+.nccl-result.bad { border-color: rgba(255,77,106,.4); }
+.nccl-head { margin-bottom: 6px; }
+.nccl-node-result { margin: 6px 0; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.nccl-node-result .svc-log { width: 100%; }
 .add-panel { margin-bottom: 12px; }
 .form-grid {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 14px;

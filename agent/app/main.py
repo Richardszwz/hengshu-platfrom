@@ -18,6 +18,7 @@ import time
 import redis.asyncio as aioredis
 import uvicorn
 from fastapi import FastAPI
+from pydantic import BaseModel
 
 from .collectors.base import CollectorRegistry, Sample
 from .collectors.gpu_sys import sample as gpu_sample, start as gpu_start
@@ -26,7 +27,7 @@ from .collectors.trt import TrtCollector
 from .collectors.tgi import TgiCollector
 from .collectors.vllm import VllmCollector
 from .config import settings
-from . import service_ctl
+from . import netinfo, service_ctl
 from .service_ctl import ServiceCtl, StartRequest, container_state, is_running
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -249,13 +250,55 @@ async def logs(name: str, tail: int = 100) -> dict:
     return {"lines": await ctl.logs(name, tail)}
 
 
+@app.get("/nics")
+async def get_nics(refresh: bool = False) -> dict:
+    """宿主机网卡清单（refresh=true 强制重采，否则尽量走心跳缓存）。"""
+    if refresh or not _NICS_CACHE:
+        fresh = await netinfo.collect_host_nics()
+        if fresh:
+            _NICS_CACHE[:] = fresh
+    return {"nics": _NICS_CACHE}
+
+
+_NICS_CACHE: list[dict] = []
+
+
+class NcclTestReq(BaseModel):
+    rank: int
+    world: int
+    master_addr: str
+    master_port: int = 29500
+    nic: str                       # NCCL_SOCKET_IFNAME
+    image: str                     # 本机已有、自带 torch+NCCL 的镜像（vllm-openai）
+
+
+@app.post("/nccl-test")
+async def nccl_test(req: NcclTestReq) -> dict:
+    """多机 NCCL all_reduce 联通/带宽测试（本节点一侧）。限时 150s。"""
+    await _push_event("INFO", f"nccl ▸ rank {req.rank}/{req.world} nic={req.nic} master={req.master_addr}")
+    res = await netinfo.run_nccl_test(
+        rank=req.rank, world=req.world, master_addr=req.master_addr,
+        master_port=req.master_port, nic=req.nic, image=req.image)
+    lvl = "OK" if res["ok"] else "ERR"
+    await _push_event(lvl, f"nccl ▸ rank {req.rank} 完成 ok={res['ok']}: "
+                           + " / ".join(res["tail"][-2:])[:200])
+    return res
+
+
 async def heartbeat_loop() -> None:
     r = redis()
     ttl = int(settings.heartbeat_interval * 5)  # 必须 int：redis EXPIRE 拒收浮点（整条 pipeline 会失败丢实例注册）
     node_key = f"hs:node:{settings.node_id}"
     tomb_key = f"hs:node_del:{settings.node_id}"
+    tick = 0
     while True:
         try:
+            # 网卡采集每 ~60s 一次（一次性 host 网络容器，频繁起太重）
+            if tick % 20 == 0:
+                fresh = await netinfo.collect_host_nics()
+                if fresh:
+                    _NICS_CACHE[:] = fresh
+            tick += 1
             # 删除墓碑：控制台删节点时下发，Agent 见到即自杀（容器删自身防 restart 拉起）
             if await r.get(tomb_key):
                 logging.getLogger("hengshu.agent").warning("tombstone received, self-destruct")
@@ -274,6 +317,7 @@ async def heartbeat_loop() -> None:
                 "agent_addr": f"http://{_advertise_host()}:{settings.agent_port}",
                 "m_temp": str(sysm.get("temp", 0.0)),
                 "m_power": str(sysm.get("power", 0.0)),
+                "nics": json.dumps(_NICS_CACHE, ensure_ascii=False),
                 "last_seen": str(int(time.time())),
             }
             pipe = r.pipeline()
