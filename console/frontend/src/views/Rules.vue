@@ -7,10 +7,11 @@
       </div>
       <form class="rule-form" @submit.prevent="add">
         <input v-model.trim="newType" class="inp" placeholder="类型标识，如 code / vl / chat" required />
-        <input v-model.trim="newModel" class="inp" list="model-options" placeholder="目标模型名（须在集群在线）" required />
-        <datalist id="model-options">
-          <option v-for="m in onlineModels" :key="m" :value="m" />
-        </datalist>
+        <select v-if="onlineModels.length" v-model="newModel" class="inp" required>
+          <option value="" disabled selected>选择目标模型（集群在线）</option>
+          <option v-for="m in onlineModels" :key="m" :value="m">{{ m }}</option>
+        </select>
+        <input v-else v-model.trim="newModel" class="inp" placeholder="目标模型名（暂无在线服务，手动输入）" required />
         <button class="btn btn-cyan" type="submit">添加规则</button>
       </form>
       <p v-if="error" class="err">{{ error }}</p>
