@@ -186,7 +186,7 @@
 
     <!-- 网络设置对话框（节点行触发） -->
     <div class="mask" :class="{ on: netOpen }" @click="netOpen = false"></div>
-    <div class="launch-dialog panel" :class="{ open: netOpen }">
+    <div class="launch-dialog panel wide" :class="{ open: netOpen }">
       <div class="p-title">网络设置 <span class="sub">{{ netNode?.node_id }} · 网卡配置（RoCE 链路）</span></div>
       <div class="launch-body">
         <table class="svc-sub" v-if="netNics.length">
@@ -755,6 +755,7 @@ tr:hover td { background: rgba(0, 200, 255, .04); }
   background: var(--card); border: 1px solid var(--border); border-radius: 8px;
   transition: opacity .2s, transform .2s;
 }
+.launch-dialog.wide { width: 860px; max-width: 92vw; }
 .launch-dialog.open { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%) scale(1); }
 .launch-dialog .p-title { padding: 12px 16px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 13px; }
 .launch-dialog .p-title .sub { color: var(--muted-foreground, #8b98b8); font-size: 11px; margin-left: 8px; font-weight: 400; }
