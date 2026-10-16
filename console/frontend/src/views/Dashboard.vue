@@ -241,7 +241,9 @@ function nodeById(nid: string) {
 
 /* ---------- 格式化 ---------- */
 function fmtNum(n: number) {
-  return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n))
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'k'
+  if (n > 0 && n < 10) return n.toFixed(1)   // 小流量 QPS（0.1~9.9）必须可见，不能四舍五入成 0
+  return String(Math.round(n))
 }
 
 /* ---------- ECharts 配置（001 原型样式常量） ---------- */
