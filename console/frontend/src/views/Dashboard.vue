@@ -12,6 +12,8 @@
         </div>
     </template>
 
+    <div class="dash-wrap">
+    <div class="dash-main">
       <!-- KPI 行 -->
       <div class="kpis" v-if="summary">
         <div class="panel corner kpi">
@@ -41,27 +43,15 @@
         </div>
       </div>
 
-      <!-- 图区 A：QPS 趋势 + 集群水位 -->
+      <!-- 图区 A：QPS 趋势（整行） -->
       <div class="grid-a">
         <div class="panel corner">
           <div class="p-title">集群 QPS 趋势 <span class="sub">REALTIME · 60s WINDOW</span></div>
           <div ref="elQps" id="chQps" class="chart"></div>
         </div>
-        <div class="panel corner">
-          <div class="p-title">集群综合水位 <span class="sub">WEIGHTED</span></div>
-          <div class="gauge-wrap">
-            <div ref="elGauge" id="chGauge" class="chart"></div>
-            <div class="gauge-legend" v-if="summary">
-              <span class="gl-item"><i class="dot" style="background:#00e5ff"></i>GPU UTIL 加权
-                <b class="mono">{{ Math.round(summary.gpu_util_weighted || 0) }}%</b></span>
-              <span class="gl-item"><i class="dot" style="background:#2dffa8"></i>VRAM 加权
-                <b class="mono">{{ Math.round(summary.vram_weighted || 0) }}%</b></span>
-            </div>
-          </div>
-        </div>
       </div>
 
-      <!-- 图区 B：TTFT / 模型吞吐 / 会话分布 -->
+      <!-- 图区 B：TTFT / 模型吞吐 / 会话分布 / 集群水位（四等列） -->
       <div class="grid-b">
         <div class="panel corner">
           <div class="p-title">TTFT 延迟 <span class="sub">ms · AVG</span></div>
@@ -74,6 +64,18 @@
         <div class="panel corner">
           <div class="p-title">会话分布 <span class="sub">BY MODEL</span></div>
           <div ref="elSess" id="chSess" class="chart"></div>
+        </div>
+        <div class="panel corner">
+          <div class="p-title">集群综合水位 <span class="sub">WEIGHTED</span></div>
+          <div class="gauge-wrap">
+            <div ref="elGauge" id="chGauge" class="chart"></div>
+            <div class="gauge-legend" v-if="summary">
+              <span class="gl-item"><i class="dot" style="background:#00e5ff"></i>GPU UTIL 加权
+                <b class="mono">{{ Math.round(summary.gpu_util_weighted || 0) }}%</b></span>
+              <span class="gl-item"><i class="dot" style="background:#2dffa8"></i>VRAM 加权
+                <b class="mono">{{ Math.round(summary.vram_weighted || 0) }}%</b></span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -91,18 +93,7 @@
         </div>
       </div>
 
-      <!-- 图区 C：集群事件流 -->
-      <div class="grid-c">
-        <div class="panel corner">
-          <div class="p-title">集群事件流 <span class="sub">EVENT SYSTEM · ROUTER / AGENT / SCHED</span></div>
-          <div ref="elEv" class="ev-box">
-            <div v-for="(e, i) in events" :key="i" class="ev-line">
-              <span class="t">{{ e.time }}</span><span class="lv" :class="e.level">{{ e.level }}</span><span class="m">{{ e.text }}</span>
-            </div>
-            <div v-if="!events.length" style="color:#4a6a80;font-size:11px">暂无事件</div>
-          </div>
-        </div>
-      </div>
+      <!-- 图区 C 已迁往右侧独占列 -->
 
       <!-- 服务表 -->
       <div class="panel corner svc">
@@ -124,6 +115,22 @@
           </tbody>
         </table>
       </div>
+
+    </div><!-- /dash-main -->
+
+    <!-- 右侧独占列：集群事件流（最新在上） -->
+    <div class="dash-side">
+      <div class="panel corner ev-col">
+        <div class="p-title">集群事件流 <span class="sub">EVENT SYSTEM · 最新在上</span></div>
+        <div ref="elEv" class="ev-box">
+          <div v-for="(e, i) in events" :key="i" class="ev-line">
+            <span class="t">{{ e.time }}</span><span class="lv" :class="e.level">{{ e.level }}</span><span class="m">{{ e.text }}</span>
+          </div>
+          <div v-if="!events.length" style="color:#4a6a80;font-size:11px">暂无事件</div>
+        </div>
+      </div>
+    </div>
+    </div><!-- /dash-wrap -->
 
     <!-- 节点详情抽屉 -->
     <div class="mask" :class="{ on: drawerOpen }" @click="closeDrawer"></div>
@@ -193,7 +200,7 @@ const charts = new Map<string, echarts.ECharts>()
 let timer = 0
 
 /* ---------- 计算属性 ---------- */
-const events = computed(() => (summary.value?.events || []).slice(-16))
+const events = computed(() => [...(summary.value?.events || [])].reverse().slice(0, 40))  // 最新在上
 const alerts = computed(() => {
   const evts = (summary.value?.events || []).filter((e: any) => e.level === 'WARN' || e.level === 'ERROR')
   // 崩溃循环服务置顶告警（用户要求：报错要打到前台）
@@ -534,7 +541,7 @@ onUnmounted(() => {
 .corner::after { bottom: -1px; right: -1px; border-bottom: 2px solid var(--cyan); border-right: 2px solid var(--cyan); }
 
 /* ---------- 图表区 ---------- */
-.grid-a { display: grid; grid-template-columns: 1.6fr 1fr; gap: 12px; }
+.grid-a { display: grid; grid-template-columns: 1fr; gap: 12px; }  /* QPS 整行 */
 /* 水位仪表：ECharts 只画环；数值图例放在图下方（普通文档流，永不重叠） */
 .gauge-wrap { position: relative; }
 .gauge-legend {
@@ -546,7 +553,7 @@ onUnmounted(() => {
 .gl-item .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .chart-box { height: 180px; }
 .chart-box.tall { height: 220px; }
-.grid-b { display: grid; grid-template-columns: 1fr 1.2fr 1fr; gap: 12px; }
+.grid-b { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .donut-wrap { position: relative; height: 190px; }
 .donut-center {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
@@ -584,6 +591,14 @@ onUnmounted(() => {
 .n-foot b { color: var(--txt-dim); font-family: var(--font-num); }
 .node-detail { margin-top: 8px; }
 .grid-c { display: grid; grid-template-columns: 1fr; gap: 12px; }  /* 事件流拉满整行 */
+
+/* ---------- 布局：主区 + 右侧事件流独占列 ---------- */
+.dash-wrap { display: flex; gap: 12px; align-items: flex-start; }
+.dash-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.dash-main > * { margin: 0; }
+.dash-side { flex: 0 0 360px; width: 360px; max-width: 360px; position: sticky; top: 12px; }
+.ev-col { max-height: calc(100vh - 140px); display: flex; flex-direction: column; }
+.ev-col .ev-box { flex: 1; min-height: 0; height: auto; overflow-y: auto; }
 
 /* ---------- 集群事件流 ---------- */
 .evts { max-height: 230px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
