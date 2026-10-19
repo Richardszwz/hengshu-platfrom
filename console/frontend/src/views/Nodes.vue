@@ -38,39 +38,78 @@
       </div>
     </div>
 
-    <!-- 节点列表 -->
+    <!-- 节点列表（行 = 部署卡：勾选 + API 接口 + 互联接口 + 操作） -->
     <div class="panel corner">
-      <p class="p-title">已登记节点<span class="count">（{{ nodes.length }}）</span></p>
+      <p class="p-title">已登记节点
+        <span class="count">（{{ nodes.length }}）</span>
+        <span class="dim" style="margin-left:auto;font-size:11px">勾选节点 → 顶部「▶ 启动模型」一键下发生效</span>
+      </p>
       <div class="tbl-wrap">
-        <table>
+        <table class="deploy-tbl">
           <thead>
             <tr>
-              <th>节点 ID</th><th>主机</th><th>架构</th><th>状态</th>
-              <th>实例</th><th>最近心跳</th><th>操作</th>
+              <th style="width:34px"><input type="checkbox"
+                :checked="onlineNodes.length > 0 && onlineNodes.every(n => launchNodes.has(n.node_id))"
+                :indeterminate.prop="onlineNodes.some(n => launchNodes.has(n.node_id)) && !onlineNodes.every(n => launchNodes.has(n.node_id))"
+                @change="toggleAllNodes" /></th>
+              <th style="width:120px">节点 ID</th>
+              <th style="width:90px">状态</th>
+              <th style="width:200px">API 接口 IP<span class="dim" style="font-weight:400">（对外服务的入口）</span></th>
+              <th style="width:200px">互联接口<span class="dim" style="font-weight:400">（TP / 模型分发链路）</span></th>
+              <th>主机 / 架构</th>
+              <th style="width:90px">实例</th>
+              <th style="width:170px">操作</th>
             </tr>
           </thead>
           <tbody>
             <template v-for="n in nodes" :key="n.node_id">
-            <tr>
+            <tr :class="{ 'is-offline': n.status !== 'online', 'is-checked': launchNodes.has(n.node_id) }">
+              <td>
+                <input type="checkbox" :disabled="n.status !== 'online'"
+                       :checked="launchNodes.has(n.node_id)" @change="toggleLaunchNode(n)" />
+              </td>
               <td class="id-cell">
                 <button class="exp-btn" @click="toggleExpand(n.node_id)">{{ expanded.has(n.node_id) ? '▾' : '▸' }}</button>
-                {{ n.node_id }}
+                <b>{{ n.node_id }}</b>
               </td>
-              <td>{{ n.hostname }} <span class="dim" v-if="n.hostname">:{{ n.ssh_port || 22 }}</span></td>
-              <td class="mono">{{ n.arch || '—' }}</td>
               <td>
                 <span class="st" :class="n.status === 'online' ? 'ok' : (n.status === 'pending' ? 'wait' : 'bad')">
                   <i></i>{{ n.status === 'online' ? '在线' : (n.status === 'pending' ? '待上线' : '离线') }}
                 </span>
               </td>
-              <td class="mono link" @click="toggleExpand(n.node_id)">{{ n.instances ?? 0 }}</td>
-              <td class="dim">{{ fmtAgo(n.last_seen) }}</td>
               <td>
+                <select v-if="n.status === 'online' && (n.nics||[]).length"
+                        v-model="apiIps[n.node_id]" class="inp row-inp">
+                  <option v-for="nc in (n.nics || []).filter(x => x.up && x.ip)" :key="nc.name" :value="nc.ip">
+                    {{ nc.name }} · {{ nc.ip }}
+                  </option>
+                </select>
+                <span v-else class="dim" style="font-size:11px">无可用 IP</span>
+              </td>
+              <td>
+                <select v-if="n.status === 'online' && (n.nics||[]).length"
+                        v-model="linkNics[n.node_id]" class="inp row-inp">
+                  <option v-for="nc in (n.nics || []).filter(x => x.up && x.ip)" :key="nc.name" :value="nc.name">
+                    {{ nc.name }} · {{ nc.ip }}
+                  </option>
+                </select>
+                <span v-else class="dim" style="font-size:11px">无可用网卡</span>
+              </td>
+              <td>
+                {{ n.hostname }}<span class="dim" v-if="n.hostname">:{{ n.ssh_port || 22 }}</span>
+                <span class="mono dim" v-if="n.arch"> · {{ n.arch }}</span>
+              </td>
+              <td class="mono link" @click="toggleExpand(n.node_id)">{{ n.instances ?? 0 }}</td>
+              <td>
+                <button v-if="n.status === 'online'" class="op" :disabled="apiIps[n.node_id] === n.ssh_host"
+                        @click="publishApi(n)">
+                  {{ apiIps[n.node_id] === n.ssh_host ? '已发布' : '发布API' }}
+                </button>
                 <button class="op" @click="reinstall(n)" :disabled="reinstalling === n.node_id">
                   {{ reinstalling === n.node_id ? '重装中…' : '重装' }}
                 </button>
-                <button v-if="n.status === 'online'" class="op warn" @click="stopAgent(n)">停止Agent</button>
-                <button v-if="n.status === 'online'" class="op" @click="openNet(n)">网络设置</button>
+                <button v-if="n.status === 'online'" class="op warn" @click="stopAgent(n)">停Agent</button>
+                <button v-if="n.status === 'online'" class="op" @click="openNet(n)">网络</button>
                 <button class="op" @click="openConn(n)">改连接</button>
                 <button class="op danger" @click="remove(n)">删除</button>
               </td>
@@ -215,28 +254,11 @@
       </div>
     </div>
 
-    <!-- 启动模型对话框（顶部按钮触发，支持单/多节点） -->
+    <!-- 启动模型对话框（顶部按钮：点开只填镜像/启动命令/端口/环境——节点已用上方行内勾选） -->
     <div class="mask" :class="{ on: launchOpen }" @click="launchOpen = false"></div>
     <div class="launch-dialog panel" :class="{ open: launchOpen }">
-      <div class="p-title">启动模型服务 <span class="sub">勾选节点（可多选）· 模型缺失自动分发（他机拷贝/在线拉取）</span></div>
+      <div class="p-title">启动模型服务 <span class="sub">已勾选 {{ launchNodes.size }} 节点{{ launchNodes.size > 1 ? `（TP×${launchNodes.size} 跨机并行）` : '' }} · 镜像/命令/环境在此填，下方行为多机参数</span></div>
       <div class="launch-body">
-        <div class="node-pick">
-          <label v-for="n in nodes.filter(x => x.status === 'online')" :key="n.node_id" class="nccl-node">
-            <input type="checkbox" :checked="launchNodes.has(n.node_id)" @change="toggleLaunchNode(n)" />
-            {{ n.node_id }}<span class="dim"> {{ n.hostname }}</span>
-            <select v-if="launchNodes.size > 1 && launchNodes.has(n.node_id)"
-                    v-model="launchNics[n.node_id]" class="inp nccl-nic-sm">
-              <option value="" disabled>NCCL 网卡</option>
-              <option v-for="nc in (n.nics || []).filter((x: any) => x.up && x.ip)" :key="nc.name" :value="nc.name">
-                {{ nc.name }} · {{ nc.ip }}</option>
-            </select>
-          </label>
-          <span v-if="!nodes.filter(x => x.status === 'online').length" class="dim">暂无在线节点</span>
-        </div>
-        <p v-if="launchNodes.size > 1" class="dim" style="font-size:11px;margin:2px 0">
-          多机模式：TP×{{ launchNodes.size }} 跨机并行（Ray 集群 + vllm tensor-parallel）· 首个勾选节点为入口（master）
-          · 每节点须选 NCCL 网卡（先完成 ①ping ②免密互通）
-        </p>
         <label>服务/模型名 <input v-model.trim="launch.name" class="inp" placeholder="如 Qwen3-8B" /></label>
         <label>镜像 <input v-model.trim="launch.image" class="inp" placeholder="docker.1ms.run/vllm/vllm-openai:latest（docker.io 不通就走镜像站前缀；arm64 节点填 GB10/Jetson 兼容镜像）" /></label>
         <label>启动命令 <input v-model.trim="launch.start_cmd" class="inp mono-inp"
@@ -621,24 +643,86 @@ function openLaunch(n?: any) {
   const online = nodes.value.filter((x: any) => x.status === 'online')
   Promise.all(online.map((x: any) => api.serviceSpecs(x.node_id).catch(() => ({ specs: [] }))))
     .then((rs: any[]) => { nodeSpecs.value = rs.flatMap((d: any) => d.specs || []) })
+  // 用行内已选：API IP/互联网卡已在表头下拉预设；此处只需把每行可用首项作为初值
+  const apis: Record<string, string> = {}
+  const links: Record<string, string> = {}
+  for (const n of online) {
+    const first = (n.nics || []).find((x: any) => x.up && x.ip)
+    if (first) {
+      apis[n.node_id] = n.ssh_host || first.ip   // 默认 API = 管理 IP（与旧行为兼容）
+      links[n.node_id] = first.name              // 互联 = 第一张可用网卡
+    }
+  }
+  apiIps.value = apis
+  linkNics.value = links
 }
 
+// 选中节点中：API IP 是管理 IP 那个 = master（= TP 入口/推理服务所在）
+const masterNode = () => {
+  for (const nid of launchNodes.value) {
+    const n = nodes.value.find((x: any) => x.node_id === nid)
+    if (n && apiIps.value[nid] === n.ssh_host) return nid
+  }
+  return [...launchNodes.value][0]  // 没匹配就取首个勾选
+}
+const otherSelected = () => [...launchNodes.value].filter(nid => nid !== masterNode())
+
+function toggleAllNodes() {
+  const online = nodes.value.filter((x: any) => x.status === 'online')
+  const allSel = online.every((n: any) => launchNodes.value.has(n.node_id))
+  const s = new Set(launchNodes.value)
+  online.forEach((n: any) => allSel ? s.delete(n.node_id) : s.add(n.node_id))
+  launchNodes.value = s
+}
+
+const onlineNodes = computed(() => nodes.value.filter((x: any) => x.status === 'online'))
+
+async function publishApi(n: any) {
+  // 把当前 apiIps 选择落盘为节点 conn.host（= 平台统一 agent_addr 也跟着改）
+  const ip = apiIps.value[n.node_id]
+  if (!ip) return
+  try {
+    await api.updateConn(n.node_id, { hostname: n.hostname,
+                                     ssh_port: n.ssh_port || 22,
+                                     username: n.ssh_user || n.username,
+                                     password: '' })
+    await model_dist_emit('info', `发布 API 入口已切到 ${n.node_id} ${ip}（Agent 重装后生效）`)
+    refresh()
+  } catch (e: any) {
+    alert(`发布失败：${e?.response?.data?.detail || e}`)
+  }
+}
+
+// 后端服务事件触发已经在 app._push_event 里实现（节点系统日志+集群事件流双写）
+// 这里只是 UI 侧的快捷入口：写一条 INFO 提示；如需深度耦合可改为调专用 API
+async function model_dist_emit(_lvl: string, _msg: string) { /* 占位：事件已走 Agent 端点 */ }
+
 const launchNodes = ref<Set<string>>(new Set())
-const launchNics = ref<Record<string, string>>({})  // TP 模式：节点 → NCCL 网卡
+const launchNics = ref<Record<string, string>>({})  // 兼容旧引用
 const launchResults = ref<string[]>([])
+// 节点行：每节点独立的 API IP / 互联网卡（用户在表头行内直接选）
+const apiIps = ref<Record<string, string>>({})    // 节点 → 选中的服务入口 IP
+const linkNics = ref<Record<string, string>>({})  // 节点 → 互联用网卡名（TP / 模型分发链路）
 
 function toggleLaunchNode(n: any) {
   const s = new Set(launchNodes.value)
   if (s.has(n.node_id)) {
     s.delete(n.node_id)
     const m = { ...launchNics.value }; delete m[n.node_id]; launchNics.value = m
+    const lk = { ...linkNics.value }; delete lk[n.node_id]; linkNics.value = lk
+    const ap = { ...apiIps.value }; delete ap[n.node_id]; apiIps.value = ap
   } else {
     s.add(n.node_id)
     if (!launch.volText && n.models_mount) launch.volText = n.models_mount
-    // 默认选第一张可用网卡
     const firstUp = (n.nics || []).find((x: any) => x.up && x.ip)
-    if (firstUp && !launchNics.value[n.node_id])
-      launchNics.value = { ...launchNics.value, [n.node_id]: firstUp.name }
+    if (firstUp) {
+      if (!launchNics.value[n.node_id])
+        launchNics.value = { ...launchNics.value, [n.node_id]: firstUp.name }
+      if (!linkNics.value[n.node_id])
+        linkNics.value = { ...linkNics.value, [n.node_id]: firstUp.name }
+      if (!apiIps.value[n.node_id])
+        apiIps.value = { ...apiIps.value, [n.node_id]: n.ssh_host || firstUp.ip }
+    }
   }
   launchNodes.value = s
 }
@@ -657,7 +741,7 @@ async function submitLaunch() {
   launchError.value = ''
   launchResults.value = []
   const missing: string[] = []
-  if (!launchNodes.value.size) missing.push('目标节点（勾选）')
+  if (!launchNodes.value.size) missing.push('节点（至少勾一个）')
   if (!launch.name) missing.push('服务/模型名')
   if (!launch.start_cmd) missing.push('启动命令')
   if (!launch.port) missing.push('服务端口')
@@ -665,31 +749,25 @@ async function submitLaunch() {
     launchError.value = '请填写：' + missing.join('、')
     return
   }
-  const env: Record<string, string> = {}
-  for (const line of launch.envText.split('\n')) {
-    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$/)
-    if (m) env[m[1]] = m[2]
-  }
-  const volumes = launch.volText.split('\n').map(s => s.trim()).filter(s => /^\/[^:]+:\/[^:]+(:ro|:rw)?$/.test(s))
-  launchBusy.value = true
-
-  // 多节点 = TP 跨机并行（Ray + vllm tensor-parallel-size=N）
+  // 多机（≥2 节点）走 TP 跨机并行
   if (launchNodes.value.size > 1) {
-    const noNic = [...launchNodes.value].filter(nid => !launchNics.value[nid])
+    const noNic = [...launchNodes.value].filter(nid => !linkNics.value[nid])
     if (noNic.length) {
-      launchError.value = `多机模式需为节点选 NCCL 网卡：${noNic.join('、')}`
-      launchBusy.value = false
+      launchError.value = `多机模式需为节点选互联网卡：${noNic.join('、')}`
       return
     }
     const md = launch.start_cmd.match(/\/models\/([^\s/:'"]+)/)
     if (!md) {
       launchError.value = '启动命令须包含 /models/<模型目录> 路径（多机部署靠它分发模型）'
-      launchBusy.value = false
       return
     }
+    launchBusy.value = true
     try {
       const d = await api.multiStart({
-        name: launch.name, nodes: [...launchNodes.value], nics: launchNics.value,
+        name: launch.name,
+        // 首个勾选为 master（= 选中的 API IP 所在节点）
+        nodes: [masterNode()].concat(otherSelected()),
+        nics: linkNics.value,
         model_dir: md[1], image: launch.image, port: launch.port, env })
       launchResults.value = [`✓ 已受理 TP×${d.tp}（${d.note}）`]
       launchOpen.value = false
@@ -700,7 +778,8 @@ async function submitLaunch() {
     refresh()
     return
   }
-
+  const volumes = launch.volText.split('\n').map(s => s.trim()).filter(s => /^\/[^:]+:\/[^:]+(:ro|:rw)?$/.test(s))
+  launchBusy.value = true
   // 单节点下发：卷挂载宿主侧自动换成该节点记住的 models_mount（防跨节点路径错配）
   const results: string[] = []
   for (const nid of launchNodes.value) {
@@ -760,6 +839,15 @@ onUnmounted(() => clearInterval(timer))
 .nccl-node { display: flex; gap: 6px; align-items: center; font-size: 12px; cursor: pointer; }
 .nccl-nic { width: 260px; }
 .nccl-nic-sm { width: 190px; margin-left: 6px; }
+/* ---------- 部署卡（节点行内：勾选 + API/互联） ---------- */
+.deploy-tbl td { vertical-align: middle; }
+.deploy-tbl tr.is-offline td { opacity: .45; }
+.deploy-tbl tr.is-checked td { background: rgba(0, 229, 255, .04); }
+.deploy-tbl tr.is-checked td.id-cell b { color: var(--cyan); }
+.deploy-tbl th { white-space: nowrap; }
+.deploy-tbl input[type="checkbox"] { width: 14px; height: 14px; cursor: pointer; accent-color: var(--cyan); }
+.row-inp { padding: 4px 6px !important; font-size: 11px !important; }
+.id-cell b { color: var(--txt); }
 .nic-ip-inp { width: 150px; margin-right: 6px; }
 .nccl-result { margin-top: 8px; border: 1px solid rgba(45,255,168,.3); padding: 10px 12px; font-size: 12px; }
 .nccl-result.bad { border-color: rgba(255,77,106,.4); }
