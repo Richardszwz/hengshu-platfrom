@@ -15,14 +15,16 @@ import time
 
 import asyncssh
 import jwt
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi import Depends
+from fastapi.responses import FileResponse
 from redis.asyncio import Redis
 
 from . import deps, hooks, users_store
 from .config import settings
 from .crypto import decrypt
 from .keys import CRED_PREFIX, NODE_PREFIX
+from .security import require_role
 
 log = logging.getLogger("hengshu.term")
 
@@ -210,7 +212,8 @@ async def term_ws(ws: WebSocket) -> None:
             pass
 
 
-@router.get("/api/term/recordings")
+@router.get("/api/term/recordings",
+            dependencies=[Depends(require_role("admin"))])  # 录屏=终端审计内容，仅 admin
 async def list_recordings(_=Depends(deps.get)) -> dict:
     files = []
     if os.path.isdir(RECORD_DIR):
@@ -219,3 +222,17 @@ async def list_recordings(_=Depends(deps.get)) -> dict:
             files.append({"name": f, "size": os.path.getsize(p),
                           "mtime": int(os.path.getmtime(p))})
     return {"recordings": files}
+
+
+@router.get("/api/term/recordings/{name}",
+            dependencies=[Depends(require_role("admin"))])
+async def download_recording(name: str) -> FileResponse:
+    """下载单条 asciinema 录屏（.cast）。防路径穿越：只允许裸文件名。"""
+    if not name or name != os.path.basename(name) or ".." in name:
+        raise HTTPException(400, "非法文件名")
+    if not name.endswith(".cast"):
+        raise HTTPException(400, "仅支持 .cast 录屏文件")
+    p = os.path.join(RECORD_DIR, name)
+    if not os.path.isfile(p):
+        raise HTTPException(404, "录屏不存在")
+    return FileResponse(p, media_type="application/x-asciicast", filename=name)
