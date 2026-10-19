@@ -2,7 +2,18 @@ import axios from 'axios'
 import { useAuthStore } from '../stores/auth'
 import router from '../router'
 
+function readToken() {
+  return localStorage.getItem('hs_token') || (window as any).__hs_token__ || ''
+}
+
 // 401（token 过期/失效）→ 清登录态并弹回登录页，避免表单里冒 cryptic 报错
+axios.interceptors.request.use((cfg) => {
+  if (!cfg.headers?.Authorization) {
+    const t = readToken()
+    if (t) cfg.headers!.Authorization = `Bearer ${t}`
+  }
+  return cfg
+})
 axios.interceptors.response.use(
   (r) => r,
   (err) => {

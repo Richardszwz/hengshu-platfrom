@@ -38,78 +38,39 @@
       </div>
     </div>
 
-    <!-- 节点列表（行 = 部署卡：勾选 + API 接口 + 互联接口 + 操作） -->
+    <!-- 节点列表 -->
     <div class="panel corner">
-      <p class="p-title">已登记节点
-        <span class="count">（{{ nodes.length }}）</span>
-        <span class="dim" style="margin-left:auto;font-size:11px">勾选节点 → 顶部「▶ 启动模型」一键下发生效</span>
-      </p>
+      <p class="p-title">已登记节点<span class="count">（{{ nodes.length }}）</span></p>
       <div class="tbl-wrap">
-        <table class="deploy-tbl">
+        <table>
           <thead>
             <tr>
-              <th style="width:34px"><input type="checkbox"
-                :checked="onlineNodes.length > 0 && onlineNodes.every(n => launchNodes.has(n.node_id))"
-                :indeterminate.prop="onlineNodes.some(n => launchNodes.has(n.node_id)) && !onlineNodes.every(n => launchNodes.has(n.node_id))"
-                @change="toggleAllNodes" /></th>
-              <th style="width:120px">节点 ID</th>
-              <th style="width:90px">状态</th>
-              <th style="width:200px">API 接口 IP<span class="dim" style="font-weight:400">（对外服务的入口）</span></th>
-              <th style="width:200px">互联接口<span class="dim" style="font-weight:400">（TP / 模型分发链路）</span></th>
-              <th>主机 / 架构</th>
-              <th style="width:90px">实例</th>
-              <th style="width:170px">操作</th>
+              <th>节点 ID</th><th>主机</th><th>架构</th><th>状态</th>
+              <th>实例</th><th>最近心跳</th><th>操作</th>
             </tr>
           </thead>
           <tbody>
             <template v-for="n in nodes" :key="n.node_id">
-            <tr :class="{ 'is-offline': n.status !== 'online', 'is-checked': launchNodes.has(n.node_id) }">
-              <td>
-                <input type="checkbox" :disabled="n.status !== 'online'"
-                       :checked="launchNodes.has(n.node_id)" @change="toggleLaunchNode(n)" />
-              </td>
+            <tr>
               <td class="id-cell">
                 <button class="exp-btn" @click="toggleExpand(n.node_id)">{{ expanded.has(n.node_id) ? '▾' : '▸' }}</button>
-                <b>{{ n.node_id }}</b>
+                {{ n.node_id }}
               </td>
+              <td>{{ n.hostname }} <span class="dim" v-if="n.hostname">:{{ n.ssh_port || 22 }}</span></td>
+              <td class="mono">{{ n.arch || '—' }}</td>
               <td>
                 <span class="st" :class="n.status === 'online' ? 'ok' : (n.status === 'pending' ? 'wait' : 'bad')">
                   <i></i>{{ n.status === 'online' ? '在线' : (n.status === 'pending' ? '待上线' : '离线') }}
                 </span>
               </td>
-              <td>
-                <select v-if="n.status === 'online' && (n.nics||[]).length"
-                        v-model="apiIps[n.node_id]" class="inp row-inp">
-                  <option v-for="nc in (n.nics || []).filter(x => x.up && x.ip)" :key="nc.name" :value="nc.ip">
-                    {{ nc.name }} · {{ nc.ip }}
-                  </option>
-                </select>
-                <span v-else class="dim" style="font-size:11px">无可用 IP</span>
-              </td>
-              <td>
-                <select v-if="n.status === 'online' && (n.nics||[]).length"
-                        v-model="linkNics[n.node_id]" class="inp row-inp">
-                  <option v-for="nc in (n.nics || []).filter(x => x.up && x.ip)" :key="nc.name" :value="nc.name">
-                    {{ nc.name }} · {{ nc.ip }}
-                  </option>
-                </select>
-                <span v-else class="dim" style="font-size:11px">无可用网卡</span>
-              </td>
-              <td>
-                {{ n.hostname }}<span class="dim" v-if="n.hostname">:{{ n.ssh_port || 22 }}</span>
-                <span class="mono dim" v-if="n.arch"> · {{ n.arch }}</span>
-              </td>
               <td class="mono link" @click="toggleExpand(n.node_id)">{{ n.instances ?? 0 }}</td>
+              <td class="dim">{{ fmtAgo(n.last_seen) }}</td>
               <td>
-                <button v-if="n.status === 'online'" class="op" :disabled="apiIps[n.node_id] === n.ssh_host"
-                        @click="publishApi(n)">
-                  {{ apiIps[n.node_id] === n.ssh_host ? '已发布' : '发布API' }}
-                </button>
                 <button class="op" @click="reinstall(n)" :disabled="reinstalling === n.node_id">
                   {{ reinstalling === n.node_id ? '重装中…' : '重装' }}
                 </button>
-                <button v-if="n.status === 'online'" class="op warn" @click="stopAgent(n)">停Agent</button>
-                <button v-if="n.status === 'online'" class="op" @click="openNet(n)">网络</button>
+                <button v-if="n.status === 'online'" class="op warn" @click="stopAgent(n)">停止Agent</button>
+                <button v-if="n.status === 'online'" class="op" @click="openNet(n)">网络设置</button>
                 <button class="op" @click="openConn(n)">改连接</button>
                 <button class="op danger" @click="remove(n)">删除</button>
               </td>

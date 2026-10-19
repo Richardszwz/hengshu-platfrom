@@ -6,12 +6,10 @@
         <div><b>衡枢<span style="color:var(--cyan);font-size:12px;letter-spacing:1px"> HENGSHU</span></b><small>GPU CLUSTER LB</small></div>
       </div>
       <p class="login-slogan">万流归一 · 衡以分之</p>
-      <form @submit.prevent="doLogin">
-        <input v-model="username" class="hs-input" placeholder="用户名" autocomplete="username" />
-        <input v-model="password" class="hs-input" type="password" placeholder="密码"
-               autocomplete="current-password" />
-        <button class="hs-btn" type="submit" :disabled="loading">{{ loading ? '验证中…' : '登 录' }}</button>
-      </form>
+      <input v-model="username" class="hs-input" placeholder="用户名" autocomplete="username" />
+      <input v-model="password" class="hs-input" type="password" placeholder="密码"
+             autocomplete="current-password" @keyup.enter="doLogin" />
+      <button class="hs-btn" :disabled="loading" @click="doLogin">{{ loading ? '验证中…' : '登 录' }}</button>
       <div v-if="error" class="login-err">{{ error }}</div>
     </div>
   </div>
@@ -20,23 +18,32 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { useAuthStore } from '../stores/auth'
 
 const username = ref('admin')
 const password = ref('')
 const loading = ref(false)
 const error = ref('')
-const auth = useAuthStore()
 const router = useRouter()
 
 async function doLogin() {
   loading.value = true
   error.value = ''
   try {
-    await auth.login(username.value, password.value)
+    const r = await fetch('/api/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: username.value, password: password.value })
+    })
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({} as any))
+      throw new Error(d?.detail || `登录失败 (HTTP ${r.status})`)
+    }
+    const data = await r.json()
+    localStorage.setItem('hs_token', data.access_token)
+    localStorage.setItem('hs_user', username.value)
+    ;(window as any).__hs_token__ = data.access_token
     router.push('/')
   } catch (e: any) {
-    error.value = e?.response?.data?.detail || '登录失败：请检查密码'
+    error.value = e?.message || '登录失败：请检查密码'
   } finally {
     loading.value = false
   }
@@ -60,6 +67,7 @@ async function doLogin() {
   padding: 10px 12px; font-size: 13px; outline: none;
 }
 .hs-input:focus { border-color: var(--cyan); box-shadow: 0 0 8px rgba(0, 229, 255, .2); }
+.login-panel input, .login-panel button { display: flex; width: 100%; }
 .hs-btn {
   background: linear-gradient(90deg, var(--cyan), #2a86b8); color: #04121e; border: 0;
   padding: 10px; font-weight: 700; letter-spacing: 6px; cursor: pointer; font-size: 14px;

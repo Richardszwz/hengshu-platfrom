@@ -9,5 +9,19 @@ export default defineConfig({
       '/api': { target: 'http://localhost:8080', changeOrigin: true }
     }
   },
-  build: { outDir: 'dist', chunkSizeWarningLimit: 1200 }
+  build: {
+    outDir: 'dist',
+    chunkSizeWarningLimit: 1200,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('axios')) return 'vendor-axios'
+            if (id.includes('pinia') || id.includes('vue-router')) return 'vendor-vue'
+            return 'vendor'
+          }
+        }
+      }
+    }
+  }
 })

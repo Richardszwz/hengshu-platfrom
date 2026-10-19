@@ -16,8 +16,9 @@ const router = createRouter({
 })
 
 router.beforeEach((to) => {
-  const auth = useAuthStore()
-  if (to.name !== 'login' && !auth.token) return { name: 'login' }
+  // 直接读 localStorage 而非 store（store 在 router 注册时尚未实例化，auth.token 永远为空）
+  const token = localStorage.getItem('hs_token') || (window as any).__hs_token__ || ''
+  if (to.name !== 'login' && !token) return { name: 'login' }
 })
 
 export default router
