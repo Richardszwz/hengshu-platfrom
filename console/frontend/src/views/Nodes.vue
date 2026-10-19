@@ -765,6 +765,11 @@ async function submitLaunch() {
     launchError.value = '请填写：' + missing.join('、')
     return
   }
+  // 环境变量文本（每行 KEY=VALUE）→ 对象，多机/单机路径共用
+  const env = Object.fromEntries(
+    launch.envText.split('\n').map(s => s.trim()).filter(s => /^[A-Za-z_][A-Za-z0-9_]*=.*/.test(s))
+      .map(s => { const i = s.indexOf('='); return [s.slice(0, i), s.slice(i + 1)] })
+  )
   // 多机（≥2 节点）走 TP 跨机并行
   if (launchNodes.value.size > 1) {
     const noNic = [...launchNodes.value].filter(nid => !linkNics.value[nid])
