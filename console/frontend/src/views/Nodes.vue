@@ -953,12 +953,14 @@ tr:hover td { background: rgba(0, 200, 255, .04); }
   width: 520px; z-index: 100; opacity: 0; pointer-events: none;
   background: var(--card); border: 1px solid var(--border); border-radius: 8px;
   transition: opacity .2s, transform .2s;
+  display: flex; flex-direction: column;
+  max-height: calc(100vh - 60px);  /* 高度自适应视口，超出内部滚动 */
 }
 .launch-dialog.wide { width: 860px; max-width: 92vw; }
 .launch-dialog.open { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%) scale(1); }
-.launch-dialog .p-title { padding: 12px 16px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 13px; }
+.launch-dialog .p-title { padding: 12px 16px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 13px; flex: 0 0 auto; }
 .launch-dialog .p-title .sub { color: var(--muted-foreground, #8b98b8); font-size: 11px; margin-left: 8px; font-weight: 400; }
-.launch-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.launch-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .launch-body label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted-foreground, #8b98b8); }
 .launch-body .inp {
   background: rgba(0, 30, 50, .6); border: 1px solid var(--border); color: inherit;
@@ -970,7 +972,7 @@ tr:hover td { background: rgba(0, 200, 255, .04); }
 .launch-body .err { color: #ff5f6b; font-size: 12px; margin: 0; }
 .launch-foot {
   display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border); flex: 0 0 auto;
 }
 .mini-btn {
   background: transparent; border: 1px solid var(--border); color: inherit;
