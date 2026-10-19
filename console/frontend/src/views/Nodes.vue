@@ -254,28 +254,92 @@
       </div>
     </div>
 
-    <!-- 启动模型对话框（顶部按钮：点开只填镜像/启动命令/端口/环境——节点已用上方行内勾选） -->
+    <!-- 启动模型对话框（顶部按钮：tab 化——参数/节点/网络） -->
     <div class="mask" :class="{ on: launchOpen }" @click="launchOpen = false"></div>
-    <div class="launch-dialog panel" :class="{ open: launchOpen }">
-      <div class="p-title">启动模型服务 <span class="sub">已勾选 {{ launchNodes.size }} 节点{{ launchNodes.size > 1 ? `（TP×${launchNodes.size} 跨机并行）` : '' }} · 镜像/命令/环境在此填，下方行为多机参数</span></div>
+    <div class="launch-dialog panel wide" :class="{ open: launchOpen }">
+      <div class="p-title">启动模型服务
+        <span class="sub">已勾选 {{ launchNodes.size }} 节点{{ launchNodes.size > 1 ? `（TP×${launchNodes.size} 跨机并行）` : '' }} · 镜像/命令/环境/挂载在此填，下方选节点+网卡</span>
+      </div>
+      <div class="tabs">
+        <button class="tab" :class="{ on: launchTab === 'params' }" @click="launchTab = 'params'">① 参数</button>
+        <button class="tab" :class="{ on: launchTab === 'nodes' }" @click="launchTab = 'nodes'">② 节点与接口</button>
+      </div>
       <div class="launch-body">
-        <label>服务/模型名 <input v-model.trim="launch.name" class="inp" placeholder="如 Qwen3-8B" /></label>
-        <label>镜像 <input v-model.trim="launch.image" class="inp" placeholder="docker.1ms.run/vllm/vllm-openai:latest（docker.io 不通就走镜像站前缀；arm64 节点填 GB10/Jetson 兼容镜像）" /></label>
-        <label>启动命令 <input v-model.trim="launch.start_cmd" class="inp mono-inp"
-          placeholder="vllm serve /models/qwen --port {port} --served-model-name Qwen3-8B" /></label>
-        <label>服务端口 <input v-model.number="launch.port" class="inp" type="number" placeholder="8100" /></label>
-        <label>环境变量（每行 KEY=VALUE）<textarea v-model="launch.envText" class="inp env-inp" rows="3"
-          placeholder="HF_ENDPOINT=https://hf-mirror.com"></textarea></label>
-        <label>卷挂载（每行 宿主机路径:容器路径[:ro]，模型权重必配）<textarea v-model="launch.volText" class="inp env-inp" rows="2"
-          placeholder="/data/models:/models:ro"></textarea></label>
+        <!-- ① 参数 tab -->
+        <div v-show="launchTab === 'params'" class="tab-pane">
+          <label>服务/模型名 <input v-model.trim="launch.name" class="inp" placeholder="如 Qwen3-8B" /></label>
+          <label>镜像 <input v-model.trim="launch.image" class="inp" placeholder="docker.1ms.run/vllm/vllm-openai:latest（docker.io 不通就走镜像站前缀；arm64 节点填 GB10/Jetson 兼容镜像）" /></label>
+          <label>启动命令 <input v-model.trim="launch.start_cmd" class="inp mono-inp"
+            placeholder="vllm serve /models/qwen --port {port} --served-model-name Qwen3-8B" /></label>
+          <label>服务端口 <input v-model.number="launch.port" class="inp" type="number" placeholder="8100" /></label>
+          <label>环境变量（每行 KEY=VALUE）<textarea v-model="launch.envText" class="inp env-inp" rows="3"
+            placeholder="HF_ENDPOINT=https://hf-mirror.com"></textarea></label>
+          <label>卷挂载（每行 宿主机路径:容器路径[:ro]，模型权重必配）<textarea v-model="launch.volText" class="inp env-inp" rows="2"
+            placeholder="/data/models:/models:ro"></textarea></label>
+        </div>
+        <!-- ② 节点与接口 tab：行式部署卡 -->
+        <div v-show="launchTab === 'nodes'" class="tab-pane">
+          <p class="dim" style="font-size:11px;margin:0 0 6px">
+            勾选节点；为每节点选 <b>API 接口 IP</b>（对外服务的入口 IP，缺省=管理 IP）
+            与 <b>互联接口</b>（TP / 模型分发链路网卡）。多选时自动按"API=管理 IP"的节点做 master。
+          </p>
+          <table class="deploy-tbl compact">
+            <thead><tr>
+              <th style="width:34px"><input type="checkbox"
+                :checked="onlineNodes.length > 0 && onlineNodes.every(n => launchNodes.has(n.node_id))"
+                :indeterminate.prop="onlineNodes.some(n => launchNodes.has(n.node_id)) && !onlineNodes.every(n => launchNodes.has(n.node_id))"
+                @change="toggleAllNodes" /></th>
+              <th>节点 ID</th><th style="width:60px">状态</th>
+              <th style="width:180px">API 接口 IP</th>
+              <th style="width:180px">互联接口</th>
+              <th>主机 / 架构</th>
+            </tr></thead>
+            <tbody>
+              <tr v-for="n in nodes" :key="n.node_id"
+                  :class="{ 'is-offline': n.status !== 'online', 'is-checked': launchNodes.has(n.node_id) }">
+                <td><input type="checkbox" :disabled="n.status !== 'online'"
+                       :checked="launchNodes.has(n.node_id)" @change="toggleLaunchNode(n)" /></td>
+                <td><b>{{ n.node_id }}</b></td>
+                <td><span class="st" :class="n.status === 'online' ? 'ok' : (n.status === 'pending' ? 'wait' : 'bad')">
+                  <i></i>{{ n.status === 'online' ? '在线' : (n.status === 'pending' ? '待上线' : '离线') }}</span></td>
+                <td>
+                  <select v-if="n.status === 'online' && (n.nics||[]).length"
+                          v-model="apiIps[n.node_id]" class="inp row-inp">
+                    <option v-for="nc in (n.nics || []).filter(x => x.up && x.ip)" :key="nc.name" :value="nc.ip">
+                      {{ nc.name }} · {{ nc.ip }}
+                    </option>
+                  </select>
+                  <span v-else class="dim" style="font-size:11px">无可用 IP</span>
+                </td>
+                <td>
+                  <select v-if="n.status === 'online' && (n.nics||[]).length"
+                          v-model="linkNics[n.node_id]" class="inp row-inp">
+                    <option v-for="nc in (n.nics || []).filter(x => x.up && x.ip)" :key="nc.name" :value="nc.name">
+                      {{ nc.name }} · {{ nc.ip }}
+                    </option>
+                  </select>
+                  <span v-else class="dim" style="font-size:11px">无可用网卡</span>
+                </td>
+                <td>
+                  {{ n.hostname }}<span class="dim" v-if="n.hostname">:{{ n.ssh_port || 22 }}</span>
+                  <span class="mono dim" v-if="n.arch"> · {{ n.arch }}</span>
+                </td>
+              </tr>
+              <tr v-if="!nodes.length"><td colspan="6" class="empty">暂无节点 — 右上角「添加节点」先纳管</td></tr>
+            </tbody>
+          </table>
+        </div>
         <p v-if="launchError" class="err">{{ launchError }}</p>
         <div v-for="(r, i) in launchResults" :key="i" class="dim" style="font-size:12px">{{ r }}</div>
       </div>
       <div class="launch-foot">
         <button class="mini-btn" @click="launchOpen = false">取消</button>
-        <button class="mini-btn go" :disabled="launchBusy" @click="submitLaunch">{{ launchBusy ? '下发中…' : '启动' }}</button>
+        <button class="mini-btn" v-if="launchTab === 'params' && launchNodes.size > 0"
+                @click="launchTab = 'nodes'">下一步：选节点 →</button>
+        <button class="mini-btn go" :disabled="launchBusy" @click="submitLaunch">{{ launchBusy ? '下发中…' : (launchNodes.size > 1 ? `启动（TP×${launchNodes.size}）` : '启动') }}</button>
       </div>
     </div>
+
     <!-- 改连接对话框 -->
     <div class="mask" :class="{ on: connOpen }" @click="connOpen = false"></div>
     <div class="launch-dialog panel" :class="{ open: connOpen }">
@@ -486,6 +550,9 @@ const launchOpen = ref(false)
 const launchBusy = ref(false)
 const launchError = ref('')
 const launch = reactive({ node: '', name: '', image: 'docker.1ms.run/vllm/vllm-openai:latest', start_cmd: '', port: 8100, envText: '', volText: '' })
+const launchTab = ref<'params' | 'nodes'>('params')  // 当前活动 tab
+const apiIps = ref<Record<string, string>>({})    // 节点 → 选中的服务入口 IP
+const linkNics = ref<Record<string, string>>({})  // 节点 → 互联用网卡名
 const nodeSpecs = ref<any[]>([])  // 当前节点历史启动模板
 
 /* ---------- 网络设置对话框（节点行触发） ---------- */
@@ -697,13 +764,6 @@ async function publishApi(n: any) {
 // 这里只是 UI 侧的快捷入口：写一条 INFO 提示；如需深度耦合可改为调专用 API
 async function model_dist_emit(_lvl: string, _msg: string) { /* 占位：事件已走 Agent 端点 */ }
 
-const launchNodes = ref<Set<string>>(new Set())
-const launchNics = ref<Record<string, string>>({})  // 兼容旧引用
-const launchResults = ref<string[]>([])
-// 节点行：每节点独立的 API IP / 互联网卡（用户在表头行内直接选）
-const apiIps = ref<Record<string, string>>({})    // 节点 → 选中的服务入口 IP
-const linkNics = ref<Record<string, string>>({})  // 节点 → 互联用网卡名（TP / 模型分发链路）
-
 function toggleLaunchNode(n: any) {
   const s = new Set(launchNodes.value)
   if (s.has(n.node_id)) {
@@ -839,15 +899,25 @@ onUnmounted(() => clearInterval(timer))
 .nccl-node { display: flex; gap: 6px; align-items: center; font-size: 12px; cursor: pointer; }
 .nccl-nic { width: 260px; }
 .nccl-nic-sm { width: 190px; margin-left: 6px; }
-/* ---------- 部署卡（节点行内：勾选 + API/互联） ---------- */
-.deploy-tbl td { vertical-align: middle; }
-.deploy-tbl tr.is-offline td { opacity: .45; }
-.deploy-tbl tr.is-checked td { background: rgba(0, 229, 255, .04); }
-.deploy-tbl tr.is-checked td.id-cell b { color: var(--cyan); }
-.deploy-tbl th { white-space: nowrap; }
-.deploy-tbl input[type="checkbox"] { width: 14px; height: 14px; cursor: pointer; accent-color: var(--cyan); }
-.row-inp { padding: 4px 6px !important; font-size: 11px !important; }
-.id-cell b { color: var(--txt); }
+/* 启动对话框：tab */
+.tabs { display: flex; gap: 4px; padding: 0 16px 8px; border-bottom: 1px solid var(--border); }
+.tabs .tab { background: none; border: 1px solid transparent; color: var(--muted-foreground, #5f7f95);
+  padding: 5px 12px; cursor: pointer; font-size: 12px; }
+.tabs .tab.on { color: var(--cyan); border-color: var(--cyan-dim); background: rgba(0,229,255,.08); }
+.tab-pane { display: flex; flex-direction: column; gap: 10px; }
+.launch-dialog.wide { width: 860px; max-width: 92vw; }
+/* 节点行表（tab 内） */
+.deploy-tbl.compact { width: 100%; border-collapse: collapse; font-size: 12px; }
+.deploy-tbl.compact th, .deploy-tbl.compact td { padding: 6px 8px; text-align: left; }
+.deploy-tbl.compact thead th { color: var(--muted-foreground, #5f7f95); font-size: 11px; font-weight: 500;
+  border-bottom: 1px solid var(--border); }
+.deploy-tbl.compact tbody tr td { border-bottom: 1px dashed rgba(0,229,255,.08); }
+.deploy-tbl.compact tr.is-offline td { opacity: .45; }
+.deploy-tbl.compact tr.is-checked td { background: rgba(0, 229, 255, .05); }
+.deploy-tbl.compact tr.is-checked td b { color: var(--cyan); }
+.deploy-tbl.compact input[type="checkbox"] { width: 14px; height: 14px; cursor: pointer; accent-color: var(--cyan); }
+.deploy-tbl.compact .row-inp { padding: 3px 6px !important; font-size: 11px !important; }
+.deploy-tbl.compact .empty { text-align: center; color: var(--muted-foreground, #5f7f95); padding: 16px; }
 .nic-ip-inp { width: 150px; margin-right: 6px; }
 .nccl-result { margin-top: 8px; border: 1px solid rgba(45,255,168,.3); padding: 10px 12px; font-size: 12px; }
 .nccl-result.bad { border-color: rgba(255,77,106,.4); }
