@@ -37,8 +37,7 @@
           <tr v-for="r in recs" :key="r.name">
             <td class="mono">{{ r.name }}</td>
             <td>{{ r.size }} B</td>
-            <td><a class="dl-link" :href="'/api/term/recordings/' + encodeURIComponent(r.name)"
-                   target="_blank">下载 .cast</a></td>
+            <td><a class="dl-link" href="javascript:void 0" @click="dl(r)">下载 .cast</a></td>
           </tr>
         </tbody>
       </table>
@@ -74,6 +73,24 @@ async function loadRecs() {
   try {
     recs.value = (await api.recordings()).recordings ?? []
   } catch { /* 同上 */ }
+}
+
+// 下载需带 Authorization 头，裸 <a href> 会 401 —— fetch 取 blob 后本地下载
+async function dl(r: any) {
+  try {
+    const resp = await fetch('/api/term/recordings/' + encodeURIComponent(r.name), {
+      headers: { Authorization: `Bearer ${localStorage.getItem('hs_token') || ''}` }
+    })
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    const blob = await resp.blob()
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = r.name
+    a.click()
+    URL.revokeObjectURL(a.href)
+  } catch (e: any) {
+    alert('下载失败：' + (e?.message || e))
+  }
 }
 onMounted(() => { load(); loadRecs() })
 </script>

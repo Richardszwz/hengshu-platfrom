@@ -201,7 +201,7 @@ async def chat(req: ChatReq, x_session_id: str | None = Header(default=None),
             resp = await _proxy(inst, payload, req.stream)
             await sessions.bind(sid, model, inst.inst_id)
             await sessions.append_history(sid, req.messages)
-            await _event("OK", f"route ▸ sess#{sid[:8]} → {inst.inst_id} score+sticky")
+            # 注：不再逐请求写 route ▸ 事件——每秒数十条会把审计/告警淹出环形缓冲
             if not req.stream:
                 body = json.loads(resp)
                 body["session_id"] = sid
