@@ -148,7 +148,12 @@ async def term_ws(ws: WebSocket) -> None:
         await ws.send_json({"type": "ready", "node": node_id, "rec": os.path.basename(rec_path)})
 
         async def ssh_to_ws() -> None:
-            async for data in proc.stdout:
+            # 不能用 async for（asyncssh 文本流按行迭代）——单字符回显不含 \n 会被缓冲到回车才放出。
+            # 用 read() 按块读，有数据即推。
+            while True:
+                data = await proc.stdout.read(8192)
+                if not data:
+                    break
                 rec.event("o", data)
                 await ws.send_json({"type": "out", "data": data})
 
