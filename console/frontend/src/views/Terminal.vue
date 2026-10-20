@@ -12,6 +12,7 @@
         <button v-else class="btn" @click="disconnect">断开</button>
         <span class="chip" :class="connected ? 'ok' : 'idle'">{{ connected ? 'SESSION LIVE' : 'IDLE' }}</span>
         <span v-if="recName" class="rec">⏺ {{ recName }}</span>
+        <button class="btn diag-btn" @click="diag" title="采集终端渲染状态，发我排查">诊断</button>
         <span class="hint">高危命令策略拦截 · 会话全程录屏审计</span>
       </div>
       <div ref="termEl" class="term-body" v-show="!mirrorMode"></div>
@@ -152,6 +153,41 @@ function mirrorSend(e: Event) {
   }
 }
 
+// 终端自诊断：一键采集渲染管线状态（复制到剪贴板，排障用）
+async function diag() {
+  const rows = term?.element?.querySelectorAll('.xterm-rows > div')
+  const nonEmpty = rows ? Array.from(rows).filter(r => (r.textContent || '').trim()).length : 0
+  const rafPerHalfSec = await new Promise<number>(res => {
+    let n = 0
+    const t0 = performance.now()
+    const tick = () => { n++; if (performance.now() - t0 < 500) requestAnimationFrame(tick); else res(n) }
+    requestAnimationFrame(tick)
+    setTimeout(() => res(n), 1200)
+  })
+  const xt = term?.element
+  const info = {
+    ua: navigator.userAgent,
+    可见性: document.visibilityState,
+    聚焦: document.hasFocus(),
+    rAF每半秒: rafPerHalfSec,
+    字体状态: (document as Document).fonts?.status,
+    xterm实例: !!term,
+    渲染器类名: xt?.className || '',
+    xterm行列: term ? `${term.cols}x${term.rows}` : '',
+    PTY已同步: `${ptyCols}x${ptyRows}`,
+    渲染行数: rows?.length ?? 0,
+    非空行: nonEmpty,
+    镜像模式: mirrorMode.value,
+    WS状态: ws ? ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'][ws.readyState] : 'null',
+    已连接: connected.value,
+    数据尾部: rawTail.slice(-120),
+    错误条: (document.getElementById('hs-fatal') || { textContent: '' }).textContent
+  }
+  const text = JSON.stringify(info, null, 1)
+  try { await navigator.clipboard.writeText(text) } catch { /* 剪贴板不可用就只看 */ }
+  alert('诊断信息已复制到剪贴板，请粘贴发我：\n\n' + text)
+}
+
 /* ---------- 渲染看门狗 ----------
    覆盖三类停摆：
    a) rAF 停滞（窗口被完全遮挡/嵌入视图 hidden）→ 调内部 API 同步重绘
@@ -215,6 +251,7 @@ onUnmounted(() => { disconnect(); ro?.disconnect(); term?.dispose() })
 .chip.ok { color: var(--green); border-color: rgba(61,255,160,.4); }
 .chip.idle { color: var(--txt-dim); }
 .rec { color: var(--red); font-size: 11px; }
+.diag-btn { padding: 4px 10px; font-size: 11px; }
 .hint { margin-left: auto; font-size: 11px; }
 .term-body { flex: 1; padding: 8px 4px 8px 12px; overflow: hidden; }
 .term-body :deep(.xterm) { height: 100%; }
