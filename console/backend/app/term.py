@@ -141,7 +141,7 @@ async def term_ws(ws: WebSocket) -> None:
             asyncssh.connect(host, port=ssh_port,
                              known_hosts=None, **connect_kw), timeout=15)
         proc = await conn.create_process(
-            term_type="xterm-256color", term_size=(rows, cols),
+            term_type="xterm-256color", term_size=(cols, rows),  # asyncssh term_size=(width=cols, height=rows)
             env={"LANG": "C.UTF-8"})
         rec = _Recorder(rec_path, cols, rows)
         await _audit(r, "AUDIT", f"term ▸ {user} 连接 {node_id}（录屏 {os.path.basename(rec_path)}）")
@@ -183,7 +183,7 @@ async def term_ws(ws: WebSocket) -> None:
                         line = ""
                     proc.stdin.write(data)
                 elif t == "resize":
-                    proc.change_terminal_size(msg.get("rows", rows), msg.get("cols", cols))
+                    proc.change_terminal_size(msg.get("cols", cols), msg.get("rows", rows))  # (width, height)
 
         out_task = asyncio.create_task(ssh_to_ws())
         in_task = asyncio.create_task(ws_to_ssh())
