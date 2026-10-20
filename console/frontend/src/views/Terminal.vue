@@ -56,7 +56,7 @@ function attach(s: TermSession, el: Element | null) {
   })
 }
 
-function add() { addSession(true) }
+function add() { addSession(false) }  // 新增终端不自动连接，用户自己点连接
 function remove(s: TermSession) { removeSession(s.id) }
 
 function mirrorEnter(s: TermSession, e: Event) {
