@@ -48,6 +48,8 @@ function ensureTerm() {
   term = new Terminal({
     fontFamily: 'Cascadia Mono, Consolas, monospace',
     fontSize: 13,
+    lineHeight: 1.0,
+    letterSpacing: 0,
     cursorBlink: true,
     theme: {
       background: '#050b12', foreground: '#c8d6e5', cursor: '#00c8ff',
@@ -68,6 +70,28 @@ function ensureTerm() {
     }
   })
   ro.observe(termEl.value!)
+
+  // canvas 渲染器依赖字体实测：字体未就绪时 fit 的字符格尺寸是错的
+  // → 光标错位/文字画出画布外（"能输入但看不见"）。字体就绪后强制重测+重绘。
+  const refitAndSync = () => {
+    if (!term || !fit) return
+    fit.fit()
+    // 清 glyph 缓存按新字体重绘
+    term.clearTextureAtlas()
+    term.refresh(0, term.rows - 1)
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
+    }
+  }
+  // fonts.ready 可能因离线 CDN 字体挂起——800ms 兜底，先到先执行
+  Promise.race([
+    (document as Document).fonts?.ready ?? Promise.resolve(),
+    new Promise(r => setTimeout(r, 800))
+  ]).then(refitAndSync)
+  // 保险：页面全部资源就绪后再校正一次（二次打开也安全，term 已存在则 ensureTerm 直接返回）
+  if (document.readyState !== 'complete') {
+    window.addEventListener('load', refitAndSync, { once: true })
+  }
 }
 
 function connect() {
