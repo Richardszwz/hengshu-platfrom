@@ -14,7 +14,14 @@
         <span v-if="recName" class="rec">⏺ {{ recName }}</span>
         <span class="hint">高危命令策略拦截 · 会话全程录屏审计</span>
       </div>
-      <div ref="termEl" class="term-body"></div>
+      <div ref="termEl" class="term-body" v-show="!mirrorMode"></div>
+      <!-- 镜像模式：渲染器停摆时的纯文本兜底（数据真实到达但 xterm 一行未渲染时自动切换） -->
+      <div v-if="mirrorMode" class="mirror-body">
+        <div class="mirror-tip">⚠ 检测到渲染受阻（窗口被遮挡或渲染器停滞），已切换纯文本模式；窗口恢复可见后自动切回</div>
+        <pre class="mirror-pre">{{ mirrorText }}</pre>
+        <input class="mirror-inp" placeholder="在此输入命令，回车执行（兜底通道）"
+               @keydown.enter.prevent="mirrorSend" />
+      </div>
     </div>
   </AppLayout>
 </template>
@@ -31,11 +38,25 @@ const nodeId = ref('')
 const onlineNodes = ref<any[]>([])
 const connected = ref(false)
 const recName = ref('')
+const mirrorMode = ref(false)   // 兜底镜像模式：渲染器停摆时显示纯文本
+const mirrorText = ref('')
 const termEl = ref<HTMLDivElement>()
 let term: Terminal | null = null
 let fit: FitAddon | null = null
 let ws: WebSocket | null = null
 let ro: ResizeObserver | null = null
+let rafAliveAt = 0              // 最近一次 rAF 触发时刻（0 = 从未触发）
+let lastDataAt = 0              // 最近一次收到 out 数据的时刻
+let rawTail = ''                // 原始数据尾部（镜像模式用，去 ANSI）
+let ptyCols = 0, ptyRows = 0    // 最后一次同步给后端的 PTY 尺寸
+
+const ANSI_RE = /[](?:\[[0-9;?]*[A-Za-z]|\][^]*|\([0-9A-Z]|[=>#][0-9]?|[A-Z@-_])/g
+function stripAnsi(s: string) { return s.replace(ANSI_RE, '') }
+
+function trackRaf() {
+  const tick = () => { rafAliveAt = performance.now(); requestAnimationFrame(tick) }
+  requestAnimationFrame(tick)
+}
 
 api.nodes().then(d => {
   // Web 终端走 SSH（已存凭证），不要求 Agent 心跳在线；pending 节点也可连
@@ -70,6 +91,7 @@ function ensureTerm() {
     }
   })
   ro.observe(termEl.value!)
+  startWatchdog()
 
   // canvas 渲染器依赖字体实测：字体未就绪时 fit 的字符格尺寸是错的
   // → 光标错位/文字画出画布外（"能输入但看不见"）。字体就绪后强制重测+重绘。
@@ -98,13 +120,20 @@ function connect() {
   ensureTerm()
   const token = localStorage.getItem('hs_token') || ''
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+  ptyCols = term!.cols; ptyRows = term!.rows
   ws = new WebSocket(`${proto}://${location.host}/api/term/ws?token=${encodeURIComponent(token)}` +
-    `&node_id=${encodeURIComponent(nodeId.value)}&cols=${term!.cols}&rows=${term!.rows}`)
+    `&node_id=${encodeURIComponent(nodeId.value)}&cols=${ptyCols}&rows=${ptyRows}`)
   ws.onmessage = ev => {
     const msg = JSON.parse(ev.data)
-    if (msg.type === 'out') term!.write(msg.data)
-    else if (msg.type === 'blocked') term!.write(`\x1b[31m${msg.msg}\x1b[0m`)
-    else if (msg.type === 'err') { term!.write(`\x1b[31m[error] ${msg.msg}\x1b[0m\r\n`); connected.value = false }
+    if (msg.type === 'out') {
+      term!.write(msg.data)
+      term!.scrollToBottom()
+      lastDataAt = performance.now()
+      rawTail = (rawTail + stripAnsi(msg.data)).slice(-60000)
+    } else if (msg.type === 'blocked') {
+      term!.write(`\x1b[31m${msg.msg}\x1b[0m`)
+      rawTail = (rawTail + '\n⛔ ' + msg.msg + '\n').slice(-60000)
+    } else if (msg.type === 'err') { term!.write(`\x1b[31m[error] ${msg.msg}\x1b[0m\r\n`); connected.value = false }
     else if (msg.type === 'ready') { connected.value = true; recName.value = msg.rec || '' }
   }
   ws.onclose = () => { connected.value = false }
@@ -112,6 +141,56 @@ function connect() {
 }
 
 function disconnect() { ws?.close(); connected.value = false }
+
+// 镜像模式输入：回车发送（与原 'in' 通道一致）
+function mirrorSend(e: Event) {
+  const inp = e.target as HTMLInputElement
+  const cmd = inp.value
+  if (ws?.readyState === WebSocket.OPEN && cmd) {
+    ws.send(JSON.stringify({ type: 'in', data: cmd + '\r' }))
+    inp.value = ''
+  }
+}
+
+/* ---------- 渲染看门狗 ----------
+   覆盖三类停摆：
+   a) rAF 停滞（窗口被完全遮挡/嵌入视图 hidden）→ 调内部 API 同步重绘
+   b) 输入框内容滞留（xterm 未消费）→ 补发 input 事件
+   c) PTY 尺寸与显示漂移 → 重发 resize
+   连续 2s 有数据但渲染全空 → 切纯文本镜像模式（保底可见可输入） */
+function startWatchdog() {
+  trackRaf()
+  window.setInterval(() => {
+    if (!term) return
+    const now = performance.now()
+    const rows = term.element?.querySelectorAll('.xterm-rows > div')
+    const nonEmpty = rows ? Array.from(rows).filter(r => (r.textContent || '').trim()).length : 0
+    const rafStalled = rafAliveAt === 0 || now - rafAliveAt > 1500
+
+    // a) rAF 停滞 → 绕过 rAF 调度直接渲染
+    if (rafStalled && now - lastDataAt < 5000) {
+      try {
+        const rs: any = (term as any)._core?._renderService
+        ;(rs?._renderer?.renderRows ?? rs?.renderRows)?.call(rs?._renderer ?? rs, 0, term.rows - 1)
+      } catch { /* 内部 API 不存在就放弃，镜像模式兜底 */ }
+    }
+    // b) 输入滞留 → 补发 input 事件让 xterm 消费
+    const ta = term.element?.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null
+    if (ta && ta.value) ta.dispatchEvent(new Event('input', { bubbles: true }))
+    // c) 几何漂移 → 重发 resize
+    if (ws?.readyState === WebSocket.OPEN && (term.cols !== ptyCols || term.rows !== ptyRows)) {
+      ptyCols = term.cols; ptyRows = term.rows
+      ws.send(JSON.stringify({ type: 'resize', cols: ptyCols, rows: ptyRows }))
+    }
+    // 镜像模式判定
+    const stalled = connected.value && (now - lastDataAt < 2000 || rawTail.length > 0) && nonEmpty === 0 && rafStalled
+    if (stalled && !mirrorMode.value) { mirrorMode.value = true; mirrorText.value = rawTail }
+    if (mirrorMode.value) {
+      mirrorText.value = rawTail
+      if (nonEmpty > 2 && !rafStalled) mirrorMode.value = false  // 渲染恢复 → 退回 xterm
+    }
+  }, 500)
+}
 
 onUnmounted(() => { disconnect(); ro?.disconnect(); term?.dispose() })
 </script>
@@ -139,4 +218,15 @@ onUnmounted(() => { disconnect(); ro?.disconnect(); term?.dispose() })
 .hint { margin-left: auto; font-size: 11px; }
 .term-body { flex: 1; padding: 8px 4px 8px 12px; overflow: hidden; }
 .term-body :deep(.xterm) { height: 100%; }
+.mirror-body { flex: 1; display: flex; flex-direction: column; padding: 8px 12px; overflow: hidden; }
+.mirror-tip { color: var(--yellow, #ffc857); font-size: 11px; margin-bottom: 6px; }
+.mirror-pre {
+  flex: 1; overflow: auto; background: #050b12; border: 1px solid var(--line);
+  padding: 10px; font: 13px/1.45 'Cascadia Mono', Consolas, monospace; color: #c8d6e5;
+  white-space: pre-wrap; word-break: break-all; margin: 0;
+}
+.mirror-inp {
+  margin-top: 8px; background: rgba(0, 30, 50, .6); border: 1px solid var(--cyan-dim);
+  color: var(--cyan); padding: 8px 12px; font: 13px 'Cascadia Mono', Consolas, monospace; outline: none;
+}
 </style>
