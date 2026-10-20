@@ -260,7 +260,7 @@ async def multi_start(req: MultiStartReq, r=Depends(deps.get)) -> dict:
             await _aio.gather(*(model_dist.ensure_model(r, nid, req.model_dir)
                                 for nid in req.nodes))
         except Exception as e:  # noqa: BLE001
-            await _emit("ERR", f"multi ▸ 模型分发失败: {e}")
+            await _emit("ERR", f"multi ▸ 模型分发失败: {type(e).__name__}: {e}")
             return
 
         # ③ Ray：head 先起，worker 并行跟上

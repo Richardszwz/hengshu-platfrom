@@ -95,44 +95,75 @@ async def _cred(r, nid: str) -> tuple[str, int, str, dict]:
 
 
 async def copy_between_nodes(r, src: str, dst: str, model: str) -> None:
-    """内网 tar 流拷贝（经控制台中转）：src:models_root/model → dst:models_root/model。"""
+    """内网 tar 流拷贝（经控制台中转）：src:models_root/model → dst:models_root/model。
+
+    防护：
+    - 目标根目录先做 mkdir 预检（rc 非零 → 描述性报错，不再空消息）
+    - 先落到 <model>.hs-part 临时名，成功后 mv 成正式名 —— 拷贝中断不留半成品目录
+      （否则 node_models 看见半截目录就跳过分发，vllm 起不来）
+    """
     sh, sp, su, skw = await _cred(r, src)
     dh, dp, du, dkw = await _cred(r, dst)
     sdir = models_root(await r.hgetall(f"hs:conn:{src}"))
     ddir = models_root(await r.hgetall(f"hs:conn:{dst}"))
+
+    async with asyncssh.connect(dh, port=dp, username=du, **dkw) as d0:
+        chk = await d0.run(f"mkdir -p {ddir} && test -w {ddir}", check=False)
+        if chk.exit_status != 0:
+            raise RuntimeError(
+                f"目标节点 {dst} 的模型根目录 {ddir} 不存在且 SSH 用户 {du} 无法创建/写入。"
+                f"请在该机建目录并授权，或把节点 models_mount 改为 /home/{du}/models:/models:ro")
+
+    part = f"{model}.hs-part"
     async with asyncssh.connect(sh, port=sp, username=su, **skw) as s, \
                asyncssh.connect(dh, port=dp, username=du, **dkw) as d:
         sp_ = await s.create_process(f"tar cf - -C {sdir} {model}", encoding=None)
-        dp_ = await d.create_process(f"mkdir -p {ddir} && tar xf - -C {ddir}",
-                                     encoding=None)
+        dp_ = await d.create_process(
+            f"rm -rf {ddir}/{part} && mkdir -p {ddir}/{part} && "
+            f"tar xf - -C {ddir}/{part} --strip-components=1 && "
+            f"rm -rf {ddir}/{model}.hs-done && mv {ddir}/{part} {ddir}/{model}.hs-done && "
+            f"rm -rf {ddir}/{model} && mv {ddir}/{model}.hs-done {ddir}/{model}",
+            encoding=None)
         total = 0
         last = time.time()
-        while True:
-            chunk = await sp_.stdout.read(1 << 20)
-            if not chunk:
-                break
-            dp_.stdin.write(chunk)
-            await dp_.stdin.drain()
-            total += len(chunk)
-            if time.time() - last > 20:
-                await _emit(r, "INFO",
-                            f"model ▸ {model} 拷贝中 {src}→{dst} 已 {total / 2**30:.1f} GiB",
-                            node=dst)
-                last = time.time()
-        dp_.stdin.write_eof()
+        try:
+            while True:
+                chunk = await sp_.stdout.read(1 << 20)
+                if not chunk:
+                    break
+                dp_.stdin.write(chunk)
+                await dp_.stdin.drain()
+                total += len(chunk)
+                if time.time() - last > 20:
+                    await _emit(r, "INFO",
+                                f"model ▸ {model} 拷贝中 {src}→{dst} 已 {total / 2**30:.1f} GiB",
+                                node=dst)
+                    last = time.time()
+            dp_.stdin.write_eof()
+        except (OSError, asyncssh.Error) as e:
+            raise RuntimeError(
+                f"tar 流传输中断 {src}→{dst}（已传 {total / 2**30:.1f} GiB）: "
+                f"{type(e).__name__} {e}") from e
         src_rc = (await sp_.wait(check=False)).exit_status
         dst_rc = (await dp_.wait(check=False)).exit_status
         if src_rc or dst_rc:
-            raise RuntimeError(f"tar 流拷贝失败 src_rc={src_rc} dst_rc={dst_rc}")
+            # 失败清理临时名，不留半成品
+            try:
+                await d.run(f"rm -rf {ddir}/{part}", check=False)
+            except Exception:  # noqa: BLE001
+                pass
+            raise RuntimeError(f"tar 流拷贝失败 src_rc={src_rc} dst_rc={dst_rc}"
+                               f"（{dst} 上已清理临时目录 {part}）")
 
 
 async def ensure_model(r, node: str, model: str, repo: str = "") -> str:
     """确保 node 上有 model；返回来源：local / copy:<src> / download。异常向上抛。"""
-    have = await node_models(r, node)
+    have = [m for m in await node_models(r, node) if not m.endswith(".hs-part")]
     if model in have:
         return "local"
     # 他机查找
-    inv = await inventory(r)
+    inv = {n: [m for m in ms if not m.endswith(".hs-part")]
+           for n, ms in (await inventory(r)).items()}
     src = next((n for n, ms in inv.items() if n != node and model in ms), None)
     if src:
         await _emit(r, "INFO",

@@ -6,11 +6,13 @@ cd "$(dirname "$0")/.."
 mkdir -p dist
 
 for arch in amd64 arm64; do
-  echo "==> 构建 linux/$arch"
+  # uname -m 命名：amd64→x86_64, arm64→aarch64（installer 按它选包）
+  suffix=$arch; [ "$arch" = amd64 ] && suffix=x86_64; [ "$arch" = arm64 ] && suffix=aarch64
+  echo "==> 构建 linux/$arch → dist/agent-$suffix.tar"
   # docker.io 不通时：BASE_IMAGE=docker.m.daocloud.io/library/python:3.11-slim bash scripts/build-agent-tars.sh
-  docker buildx build --platform "linux/$arch" -t hengshu/agent:latest \
+  (cd agent && docker buildx build --platform "linux/$arch" -t hengshu/agent:latest \
     ${BASE_IMAGE:+--build-arg BASE_IMAGE=$BASE_IMAGE} \
-    --output "type=docker,dest=dist/agent-${arch/amd64/x86_64}.tar" .
+    --output "type=docker,dest=../dist/agent-$suffix.tar" .)
 done
 
 ls -la dist/
