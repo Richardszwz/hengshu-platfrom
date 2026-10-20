@@ -184,8 +184,17 @@ async function diag() {
     错误条: (document.getElementById('hs-fatal') || { textContent: '' }).textContent
   }
   const text = JSON.stringify(info, null, 1)
-  try { await navigator.clipboard.writeText(text) } catch { /* 剪贴板不可用就只看 */ }
-  alert('诊断信息已复制到剪贴板，请粘贴发我：\n\n' + text)
+  // 剪贴板在非 HTTPS 不可用 → 直报服务端（事件流 DIAG 级），同时弹窗展示
+  try {
+    await fetch('/api/audits/client-diag', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json',
+                 Authorization: `Bearer ${localStorage.getItem('hs_token') || ''}` },
+      body: JSON.stringify(info)
+    })
+  } catch { /* 上报失败也只影响排障 */ }
+  try { await navigator.clipboard.writeText(text) } catch { /* 非安全上下文会失败，忽略 */ }
+  alert('诊断已上报服务端（告诉我一声即可），内容：\n\n' + text)
 }
 
 /* ---------- 渲染看门狗 ----------

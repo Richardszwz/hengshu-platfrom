@@ -43,3 +43,16 @@ async def list_events(r=Depends(deps.get)) -> dict:
         events.append({"ts": float(ts), "level": e.get("level", "INFO"),
                        "msg": e.get("msg") or e.get("text", "")})
     return {"events": events}
+
+
+@router.post("/client-diag")
+async def client_diag(payload: dict, r=Depends(deps.get)) -> dict:
+    """前端一键上报的诊断快照（终端渲染排障）：写事件流 DIAG 级，服务端可直接读。"""
+    msg = json.dumps(payload, ensure_ascii=False)[:1800]
+    item = json.dumps({"ts": round(time.time(), 3), "level": "DIAG",
+                       "msg": f"client-diag ▸ {msg}"}, ensure_ascii=False)
+    pipe = r.pipeline()
+    pipe.rpush(EVENTS_KEY, item)
+    pipe.ltrim(EVENTS_KEY, -200, -1)
+    await pipe.execute()
+    return {"ok": True}
