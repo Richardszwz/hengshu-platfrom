@@ -20,6 +20,15 @@ function showFatal(msg: string) {
 window.addEventListener('error', (e) => showFatal(`${e.message} @ ${(e.filename || '').split('/').pop()}:${e.lineno}`))
 window.addEventListener('unhandledrejection', (e) => showFatal('promise: ' + ((e.reason && e.reason.message) || e.reason)))
 
+// 发版后旧页面的懒加载 chunk 会 404（旧 hash 文件已删）——监听 vite 预载错误自动整页刷新拿新包
+window.addEventListener('vite:preloadError', () => { location.reload() })
+window.addEventListener('unhandledrejection', (e) => {
+  const m = (e.reason && (e.reason.message || '')) as string
+  if (m.includes('dynamically imported module') || m.includes('Importing a module script failed')) {
+    location.reload()
+  }
+})
+
 const app = createApp(App)
 app.config.errorHandler = (err: any) => showFatal('vue: ' + (err?.message || err))
 app.use(createPinia()).use(router).mount('#app')
