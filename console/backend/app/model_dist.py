@@ -52,8 +52,13 @@ async def _agent_addr(r, nid: str) -> str:
             else h.get("agent_addr", ""))
 
 
-async def node_models(r, nid: str) -> list[str]:
-    """节点现有模型目录名列表（Agent 一次性容器列宿主机目录）。"""
+async def node_models(r, nid: str, *, complete_only: bool = True) -> list[str]:
+    """节点现有模型目录名列表（Agent 一次性容器列宿主机目录）。
+
+    complete_only=True（默认）：只认完整目录（含 config/params/权重文件）——
+    半成品目录不得判"已有"（否则 vllm 起空目录崩溃循环，见 Qwen-Image 事故）。
+    旧 agent（无 complete 字段）按名字透传，保持兼容。
+    """
     addr = await _agent_addr(r, nid)
     conn = await r.hgetall(f"hs:conn:{nid}")
     if not addr:
@@ -62,7 +67,12 @@ async def node_models(r, nid: str) -> list[str]:
         async with httpx.AsyncClient(timeout=70.0, trust_env=False) as c:
             d = (await c.post(f"{addr}/models/list",
                               json={"host_dir": models_root(conn)})).json()
-            return [m["name"] for m in d.get("models", [])]
+            out = []
+            for m in d.get("models", []):
+                if complete_only and m.get("complete") is False:
+                    continue
+                out.append(m["name"])
+            return out
     except Exception as e:  # noqa: BLE001
         log.warning("node_models %s failed: %s", nid, e)
         return []
@@ -161,6 +171,13 @@ async def ensure_model(r, node: str, model: str, repo: str = "") -> str:
     have = [m for m in await node_models(r, node) if not m.endswith(".hs-part")]
     if model in have:
         return "local"
+    # 目录存在但内容不完整（缺 config/权重）→ 明示后走拉取补齐
+    all_dirs = [m for m in await node_models(r, node, complete_only=False)
+                if not m.endswith(".hs-part")]
+    if model in all_dirs:
+        await _emit(r, "WARN",
+                    f"model ▸ {node} 上 {model} 目录存在但不完整（缺 config.json/权重），"
+                    f"重新拉取补齐", node=node)
     # 他机查找
     inv = {n: [m for m in ms if not m.endswith(".hs-part")]
            for n, ms in (await inventory(r)).items()}
