@@ -87,5 +87,17 @@ export const api = {
   upsertRule: (type: string, model: string) =>
     axios.put(`/api/rules/${encodeURIComponent(type)}`, null, { params: { model } }).then(r => r.data),
   deleteRule: (type: string) =>
-    axios.delete(`/api/rules/${encodeURIComponent(type)}`).then(r => r.data)
+    axios.delete(`/api/rules/${encodeURIComponent(type)}`).then(r => r.data),
+  // 授权（两层 License）
+  licenseStatus: () => axios.get('/api/license/status').then(r => r.data),
+  licenseActivate: (license_text: string) =>
+    axios.post('/api/license/activate', { license_text }).then(r => r.data),
+  licenseDeactivate: () => axios.delete('/api/license').then(r => r.data),
+  // HSE 路由规则
+  hseRules: () => axios.get('/api/hse/rules').then(r => r.data),
+  hseCreateRule: (payload: object) => axios.post('/api/hse/rules', payload).then(r => r.data),
+  hseUpdateRule: (id: string, payload: object) =>
+    axios.put(`/api/hse/rules/${encodeURIComponent(id)}`, payload).then(r => r.data),
+  hseDeleteRule: (id: string) =>
+    axios.delete(`/api/hse/rules/${encodeURIComponent(id)}`).then(r => r.data)
 }

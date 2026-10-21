@@ -14,6 +14,37 @@
       </div>
     </div>
 
+    <!-- 授权（两层 License） -->
+    <div class="panel">
+      <div class="p-head">
+        <h3>授权</h3>
+        <span class="sub">软件基本 License + 路由引擎 License · 气隙离线激活</span>
+      </div>
+      <div class="info-grid" v-if="lic">
+        <div class="info-item"><span class="k">状态</span>
+          <span class="v" :class="lic.ok ? 'ok' : 'bad'">{{ lic.ok ? '已激活' : ('未激活' + (lic.reason && lic.reason !== 'missing' ? `（${lic.reason}）` : '')) }}</span></div>
+        <div class="info-item" v-if="lic.ok"><span class="k">客户</span><span class="v">{{ lic.customer }}</span></div>
+        <div class="info-item" v-if="lic.ok"><span class="k">基本 License</span>
+          <span class="v">{{ lic.base_mode === 'perpetual' ? '买断制' : '订阅制' }}<template v-if="lic.base_expires"> · {{ fmtDate(lic.base_expires) }} 到期</template>{{ lic.base_in_grace ? '（宽限期）' : '' }}</span></div>
+        <div class="info-item" v-if="lic.ok"><span class="k">节点上限</span><span class="v mono">{{ lic.max_nodes || '∞' }}</span></div>
+        <div class="info-item" v-if="lic.ok"><span class="k">引擎版本</span>
+          <span class="v"><b :class="lic.edition === 'STD' ? '' : 'ok'">{{ lic.edition }}</b>
+            <span class="dim">（{{ lic.caps.join(', ') }}）</span></span></div>
+        <div class="info-item"><span class="k">集群指纹</span>
+          <span class="v mono" style="user-select:all;cursor:text">{{ lic.fingerprint }}</span></div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <textarea v-model.trim="licText" class="inp lic-inp" rows="4"
+          placeholder='粘贴 license JSON（把上方指纹发给商务换回 license，粘贴到此点击激活）'></textarea>
+      </div>
+      <div class="row">
+        <button class="btn" :disabled="busy || !licText" @click="activateLic">激活</button>
+        <button v-if="lic && lic.ok" class="btn ghost" :disabled="busy" @click="deactivateLic">移除授权</button>
+        <button class="btn ghost" @click="loadLic">刷新状态</button>
+      </div>
+      <p v-if="msg.lic" class="msg" :class="msg.licOk ? 'ok' : 'bad'">{{ msg.lic }}</p>
+    </div>
+
     <!-- Webhook 通知 -->
     <div class="panel">
       <div class="p-head">
@@ -114,7 +145,44 @@ const info = ref<any>(null)
 const webhookUrl = ref('')
 const webhookSource = ref('none')
 const busy = ref(false)
-const msg = reactive({ webhook: '', webhookOk: false, pwd: '', pwdOk: false, users: '' })
+const msg = reactive({ webhook: '', webhookOk: false, pwd: '', pwdOk: false, users: '', lic: '', licOk: false })
+const lic = ref<any>(null)
+const licText = ref('')
+function fmtDate(ts: number) {
+  const d = new Date(ts * 1000)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+async function loadLic() {
+  try { lic.value = await api.licenseStatus() } catch { /* 401 统一处理 */ }
+}
+async function activateLic() {
+  busy.value = true
+  msg.lic = ''
+  try {
+    await api.licenseActivate(licText.value)
+    msg.lic = '激活成功'
+    msg.licOk = true
+    licText.value = ''
+    await loadLic()
+  } catch (e: any) {
+    msg.lic = e?.response?.data?.detail || '激活失败'
+    msg.licOk = false
+  } finally {
+    busy.value = false
+  }
+}
+async function deactivateLic() {
+  busy.value = true
+  try {
+    await api.licenseDeactivate()
+    lic.value = null
+    msg.lic = '已移除授权'
+    msg.licOk = true
+    await loadLic()
+  } finally {
+    busy.value = false
+  }
+}
 const pwd = reactive({ old: '', next: '', confirm: '' })
 const refreshMs = ref(parseInt(localStorage.getItem('hs_refresh_ms') || '4000'))
 const auth = useAuthStore()
@@ -215,7 +283,7 @@ function saveRefresh() {
   localStorage.setItem('hs_refresh_ms', String(refreshMs.value))
 }
 
-onMounted(() => { load(); loadUsers() })
+onMounted(() => { load(); loadUsers(); loadLic() })
 </script>
 
 <style scoped>
@@ -253,4 +321,5 @@ onMounted(() => { load(); loadUsers() })
 .mini-btn.danger:hover { color: var(--red); border-color: rgba(255, 77, 90, .4); }
 .mini-btn:disabled { opacity: .35; cursor: not-allowed; }
 .ok-t { color: var(--green); } .bad-t { color: var(--red); }
+.lic-inp { width: 100%; font-family: var(--font-mono, monospace); font-size: 11px; resize: vertical; }
 </style>

@@ -144,6 +144,38 @@ async def resolve_model(model: str, rule_type: str | None) -> str:
     return model
 
 
+def _msg_text(content) -> str:
+    """OpenAI 消息 content 可能是 str 或多模态块列表——统一抽文本。"""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(str(b.get("text", "")) for b in content
+                        if isinstance(b, dict) and b.get("type") == "text")
+    return ""
+
+
+async def hse_decide(messages: list[dict]) -> str | None:
+    """调 HSE 引擎取路由决策；引擎未配置/失联/未命中 → None（降级默认池）。
+
+    决策的模型若无在线实例，chat 层负责回退全池。
+    """
+    if not settings.hse_url:
+        return None
+    last_user = next((m for m in reversed(messages) if m.get("role") == "user"), None)
+    prompt = _msg_text(last_user.get("content")) if last_user else ""
+    all_text = "\n".join(_msg_text(m.get("content")) for m in messages)
+    body = {"prompt": prompt, "all_text": all_text,
+            "ctx_tokens": max(1, len(all_text) // 4), "hints": {}}
+    try:
+        async with httpx.AsyncClient(timeout=settings.hse_timeout, trust_env=False) as c:
+            d = (await c.post(f"{settings.hse_url}/v1/route-decision", json=body)).json()
+        if d.get("degraded"):
+            return None
+        return (d.get("decision") or {}).get("model")
+    except Exception:  # noqa: BLE001
+        return None  # 引擎失联/超时 → 默认池（fail-open）
+
+
 @app.post("/v1/chat/completions")
 async def chat(req: ChatReq, x_session_id: str | None = Header(default=None),
                x_type: str | None = Header(default=None),
@@ -161,6 +193,12 @@ async def chat(req: ChatReq, x_session_id: str | None = Header(default=None),
     # 规则路由：X-Type / body.type 命中 hs:rules 映射表则改写目标模型
     rule_type = x_type or req.type
     model = await resolve_model(req.model, rule_type)
+    # HSE 智能路由：接口类型未命中且未指定模型时，问引擎（引擎失联自动降级）
+    decided = None
+    if model in ("", "auto", "*"):
+        decided = await hse_decide(req.messages)
+        if decided:
+            model = decided
     if model in ("", "auto", "*"):
         candidates = await registry.all_instances()   # 不指定模型：全池按负载挑
         if not candidates:
@@ -168,6 +206,10 @@ async def chat(req: ChatReq, x_session_id: str | None = Header(default=None),
                                      + (f" (type '{rule_type}' 无规则映射)" if rule_type else ""))
     else:
         candidates = await registry.candidates(model)
+        # HSE 指定的模型无在线实例 → 回退全池（引擎决策是建议不是命令）
+        if not candidates and decided:
+            candidates = await registry.all_instances()
+            model = "auto"
     if not candidates:
         raise HTTPException(503, f"model '{model}' has no live instance"
                                  + (f" (type '{rule_type}' 映射)" if rule_type and model != req.model else ""))

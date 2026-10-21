@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     sticky_factor: float = 0.7
     # 单次请求失败后重试的候选数（不含首选用例）
     max_retry: int = 1
+    # HSE 路由引擎地址；空串=不启用（引擎失联自动降级默认池）
+    hse_url: str = "http://127.0.0.1:9100"
+    # HSE 决策超时（秒）：STD 信号µs级，超时即降级
+    hse_timeout: float = 2.0
 
 
 settings = Settings()

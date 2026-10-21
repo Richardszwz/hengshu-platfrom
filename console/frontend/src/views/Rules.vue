@@ -27,11 +27,83 @@
         </tbody>
       </table>
     </div>
+    <!-- HSE 智能路由规则（引擎求值：接口类型未命中且未指定模型时） -->
+    <div class="panel">
+      <div class="p-head">
+        <h3>智能路由规则 <span class="hse-badge">HSE</span></h3>
+        <span class="sub">优先级大者先命中；条件全部满足才命中（AND）；未命中走集群负载均衡。引擎失联自动降级，不影响主链路</span>
+      </div>
+      <form class="hse-form" @submit.prevent="hseAdd">
+        <div class="hf-row">
+          <input v-model.trim="hse.name" class="inp" placeholder="规则名，如：代码类去 27B" required />
+          <input v-model.number="hse.priority" class="inp prio" type="number" placeholder="优先级" title="优先级（大者先）" />
+          <label class="chk"><input type="checkbox" v-model="hse.enabled" /> 启用</label>
+        </div>
+        <div class="hf-row">
+          <input v-model.trim="hse.keywords" class="inp"
+                 placeholder="关键字（逗号分隔，任一命中；留空=不检）" />
+          <select v-model="hse.scope" class="inp sm" title="关键字作用域">
+            <option value="last_user">仅最后一轮提问</option>
+            <option value="all">全部上下文</option>
+          </select>
+        </div>
+        <div class="hf-row">
+          <input v-model="hse.ctxMin" class="inp sm2" type="number" placeholder="ctx≥（token）" title="上下文 token 下限，留空不限" />
+          <input v-model="hse.ctxMax" class="inp sm2" type="number" placeholder="ctx≤（token）" title="上下文 token 上限，留空不限" />
+          <select v-model="hse.codeBlock" class="inp sm" title="是否含代码块">
+            <option value="">代码块不限</option>
+            <option value="true">必须含代码块</option>
+            <option value="false">不含代码块</option>
+          </select>
+          <select v-model="hse.lang" class="inp sm" title="提问语言">
+            <option value="">语言不限</option>
+            <option value="zh">中文</option>
+            <option value="en">英文</option>
+          </select>
+        </div>
+        <div class="hf-row">
+          <select v-if="onlineModels.length" v-model="hse.model" class="inp">
+            <option value="">目标模型（不限/走档位）</option>
+            <option v-for="m in onlineModels" :key="m" :value="m">{{ m }}</option>
+          </select>
+          <input v-else v-model.trim="hse.model" class="inp" placeholder="目标模型名（暂无在线，手动输入；可留空走档位）" />
+          <select v-model="hse.tier" class="inp sm" title="档位别名（STD）" :disabled="!!hse.model">
+            <option value="">档位不限</option>
+            <option value="fast">fast（快模型）</option>
+            <option value="medium">medium</option>
+            <option value="strong">strong（强模型）</option>
+          </select>
+          <button class="btn btn-cyan" type="submit">添加</button>
+        </div>
+      </form>
+      <p v-if="hseError" class="err">{{ hseError }}</p>
+      <table class="tbl">
+        <thead><tr>
+          <th style="width:70px">优先级</th><th>规则</th><th>条件</th><th>→ 目标</th>
+          <th style="width:60px">状态</th><th style="width:70px"></th>
+        </tr></thead>
+        <tbody>
+          <tr v-for="r in hseRules" :key="r.id">
+            <td class="mono">{{ r.priority }}</td>
+            <td>{{ r.name }}</td>
+            <td class="dim" style="font-size:11px">{{ condText(r.when) }}</td>
+            <td class="mono cyan">{{ r.action?.model || r.action?.tier || '—' }}</td>
+            <td>
+              <button class="mini-btn" :class="{ danger: !r.enabled }" @click="hseToggle(r)">
+                {{ r.enabled ? '启用' : '停用' }}
+              </button>
+            </td>
+            <td><button class="mini-btn danger" @click="hseDel(r.id)">删除</button></td>
+          </tr>
+          <tr v-if="!hseRules.length"><td colspan="6" class="empty">暂无智能规则 — 未指定模型的请求全部走集群负载均衡</td></tr>
+        </tbody>
+      </table>
+    </div>
   </AppLayout>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import AppLayout from '../components/AppLayout.vue'
 import { api } from '../api/client'
 
@@ -40,6 +112,67 @@ const newType = ref('')
 const newModel = ref('')
 const error = ref('')
 const onlineModels = ref<string[]>([])
+
+/* ---------- HSE 智能路由规则 ---------- */
+const hseRules = ref<any[]>([])
+const hseError = ref('')
+const hse = reactive({
+  name: '', priority: 100, enabled: true,
+  keywords: '', scope: 'last_user',
+  ctxMin: '' as any, ctxMax: '' as any,
+  codeBlock: '', lang: '', model: '', tier: ''
+})
+
+function condText(w: any): string {
+  const parts: string[] = []
+  if (w?.keywords?.length) parts.push(`关键字[${w.keywords.join('/')}]${w.keyword_scope === 'all' ? '·全文' : ''}`)
+  if (w?.ctx_min != null) parts.push(`ctx≥${w.ctx_min}`)
+  if (w?.ctx_max != null) parts.push(`ctx≤${w.ctx_max}`)
+  if (w?.has_code_block === true) parts.push('含代码块')
+  if (w?.has_code_block === false) parts.push('无代码块')
+  if (w?.lang) parts.push(w.lang === 'zh' ? '中文' : '英文')
+  return parts.join(' ∧ ') || '无条件'
+}
+
+async function hseLoad() {
+  try {
+    const d = await api.hseRules()
+    hseRules.value = (d.rules ?? []).slice().sort((a: any, b: any) => b.priority - a.priority)
+  } catch { /* 引擎规则接口失败不阻塞页面 */ }
+}
+
+async function hseAdd() {
+  hseError.value = ''
+  const when: any = {}
+  const kws = hse.keywords.split(/[,，]/).map((s: string) => s.trim()).filter(Boolean)
+  if (kws.length) { when.keywords = kws; when.keyword_scope = hse.scope }
+  if (hse.ctxMin !== '' && hse.ctxMin != null) when.ctx_min = Number(hse.ctxMin)
+  if (hse.ctxMax !== '' && hse.ctxMax != null) when.ctx_max = Number(hse.ctxMax)
+  if (hse.codeBlock) when.has_code_block = hse.codeBlock === 'true'
+  if (hse.lang) when.lang = hse.lang
+  const action: any = {}
+  if (hse.model) action.model = hse.model
+  else if (hse.tier) action.tier = hse.tier
+  if (!action.model && !action.tier) { hseError.value = '请选目标模型或档位'; return }
+  try {
+    await api.hseCreateRule({ name: hse.name, enabled: hse.enabled,
+                              priority: hse.priority ?? 100, when, action })
+    hse.name = ''; hse.keywords = ''; hse.ctxMin = ''; hse.ctxMax = ''
+    hse.codeBlock = ''; hse.lang = ''; hse.model = ''; hse.tier = ''
+    await hseLoad()
+  } catch (e: any) { hseError.value = e?.response?.data?.detail || '添加失败' }
+}
+
+async function hseToggle(r: any) {
+  await api.hseUpdateRule(r.id, { name: r.name, enabled: !r.enabled,
+                                  priority: r.priority, when: r.when, action: r.action })
+  await hseLoad()
+}
+
+async function hseDel(id: string) {
+  await api.hseDeleteRule(id)
+  await hseLoad()
+}
 
 async function load() {
   const d = await api.rules()
@@ -61,7 +194,7 @@ async function del(type: string) {
   await api.deleteRule(type)
   await load()
 }
-onMounted(load)
+onMounted(() => { load(); hseLoad() })
 </script>
 
 <style scoped>
@@ -94,4 +227,15 @@ onMounted(load)
   font-size: 10px; padding: 2px 8px; cursor: pointer;
 }
 .mini-btn.danger:hover { color: var(--red); border-color: rgba(255,77,90,.5); }
+.hse-badge {
+  font-size: 10px; border: 1px solid var(--cyan); color: var(--cyan);
+  padding: 1px 6px; margin-left: 6px; letter-spacing: 1px;
+}
+.hse-form { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.hf-row { display: flex; gap: 8px; align-items: center; }
+.hf-row .inp { flex: 1; }
+.hf-row .inp.prio { flex: 0 0 90px; }
+.hf-row .inp.sm { flex: 0 0 170px; }
+.hf-row .inp.sm2 { flex: 0 0 120px; }
+.chk { font-size: 11px; color: var(--txt-dim); display: flex; align-items: center; gap: 4px; white-space: nowrap; }
 </style>

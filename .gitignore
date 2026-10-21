@@ -32,3 +32,4 @@ data/
 recordings/
 dist/
 .dev-console.log
+scripts/dev_keys/
