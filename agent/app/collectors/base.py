@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import platform
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Protocol
 
 # 运行期架构标记：'x86_64' | 'aarch64'
 ARCH = platform.machine()

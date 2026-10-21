@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from .. import deps
-from ..license_guard import require_active_base, require_engine_cap
+from ..license_guard import require_engine_cap
 from ..security import require_role
 
 router = APIRouter(prefix="/api/hse/embed", tags=["hse-embed"])
@@ -25,6 +25,8 @@ CONFIG_KEY = "hs:hse:config"
 
 # 部署状态（单任务，幂等重入由前端控制）
 _state: dict = {"running": False, "target": "", "step": "", "error": ""}
+# fire-and-forget 后台任务持引用（防 GC，RUF006）
+_BG_TASKS: set[asyncio.Task] = set()
 
 
 class SshIn(BaseModel):
@@ -48,7 +50,7 @@ async def _event(r, level: str, msg: str) -> None:
             {"ts": time.time(), "level": level, "msg": msg}, ensure_ascii=False))
         pipe.ltrim("hs:events", -500, -1)
         await pipe.execute()
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
 
 
@@ -65,7 +67,7 @@ async def _probe(url: str, model: str, timeout: float = 6.0) -> tuple[bool, str]
             if d.get("data", [{}])[0].get("embedding"):
                 return True, "ok"
             return False, "embedding 返回异常"
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return False, f"{type(e).__name__}: {e}"
 
 
@@ -139,7 +141,7 @@ async def _local_run(cmd: str, timeout: float = 600.0) -> tuple[int, str]:
         cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
     try:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         return -1, f"超时({timeout}s)"
     return proc.returncode or 0, out.decode(errors="replace")
@@ -171,12 +173,12 @@ async def _deploy_local(r, req: DeployIn) -> str:
     url = f"http://127.0.0.1:{req.port}"
     # 等服务就绪
     for _ in range(30):
-        ok, _ = await _probe(url, "__none__", timeout=2)
+        await _probe(url, "__none__", timeout=2)
         try:
             async with httpx.AsyncClient(timeout=2, trust_env=False) as c:
                 await c.get(f"{url}/api/tags")
             break
-        except Exception:  # noqa: BLE001
+        except Exception:
             await asyncio.sleep(1)
     await _event(r, "INFO", f"embed ▸ 拉取模型 {req.model}（数 GB，需数分钟）…")
     rc, out = await _local_run(f'ollama pull {req.model}', timeout=1800)
@@ -219,13 +221,15 @@ async def deploy(req: DeployIn, r=Depends(deps.get)) -> dict:
                 "embedding_url": url, "embedding_model": req.model})
             _state["step"] = "完成"
             await _event(r, "OK", f"embed ▸ 语义引擎已接入：{url}（模型 {req.model}）")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             _state["error"] = str(e)[:300]
             _state["step"] = "失败"
             await _event(r, "ERR", f"embed ▸ 部署失败：{str(e)[:200]}")
         finally:
             _state["running"] = False
 
-    asyncio.create_task(job())
+    t = asyncio.create_task(job())
+    _BG_TASKS.add(t)
+    t.add_done_callback(_BG_TASKS.discard)
     return {"accepted": True, "target": req.target,
             "note": "部署在后台执行，进度见集群事件流 / GET status 轮询"}

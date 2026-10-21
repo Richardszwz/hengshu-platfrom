@@ -47,7 +47,7 @@ class EmbedClient:
                 d = (await c.post(f"{self.url}/v1/embeddings",
                                   json={"model": self.model, "input": text})).json()
             vec = d["data"][0]["embedding"]
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None
         async with self._lock:
             self._cache[key] = (vec, time.time())
@@ -58,7 +58,7 @@ class EmbedClient:
 
 
 def cosine(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(y * y for y in b))
     return dot / (na * nb + 1e-12)

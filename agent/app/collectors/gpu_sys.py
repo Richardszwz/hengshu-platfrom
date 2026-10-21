@@ -7,8 +7,6 @@
 """
 from __future__ import annotations
 
-import platform
-
 from .tegra import TegraSampler
 
 _nvm = None           # pynvml 句柄（None=未探测，False=不可用）
@@ -49,12 +47,13 @@ def sample() -> dict:
 
 
 def _sample_nvm(nvm) -> dict:
-    from pynvml import (nvmlDeviceGetHandleByIndex,
-                        nvmlDeviceGetMemoryInfo,
-                        nvmlDeviceGetPowerUsage,
-                        nvmlDeviceGetTemperature,
-                        nvmlDeviceGetTemperatureThreshold,
-                        nvmlDeviceGetUtilizationRates)
+    from pynvml import (
+        nvmlDeviceGetHandleByIndex,
+        nvmlDeviceGetMemoryInfo,
+        nvmlDeviceGetPowerUsage,
+        nvmlDeviceGetTemperature,
+        nvmlDeviceGetUtilizationRates,
+    )
     util_sum = vram_sum = temp_max = power_sum = 0.0
     count = 0
     try:

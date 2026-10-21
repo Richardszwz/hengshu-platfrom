@@ -19,9 +19,8 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import (
-    Ed25519PrivateKey, Ed25519PublicKey)
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
 # 内嵌验签公钥（与 license 签发工具的 license_private.pem 配对；换钥=替换此处或设 HS_LICENSE_PUBKEY）
 _DEV_PUBKEY_PEM = b"""-----BEGIN PUBLIC KEY-----
@@ -90,11 +89,11 @@ def cluster_fingerprint() -> str:
             parts.append(open("/etc/machine-id").read().strip())
         else:
             out = subprocess.run(
-                ["powershell", "-NoProfile", "-Command",
+                ["powershell", "-NoProfile", "-Command",  # noqa: S607  # Windows 系统自带
                  "(Get-CimInstance Win32_ComputerSystemProduct).UUID"],
                 capture_output=True, text=True, timeout=10)
             parts.append(out.stdout.strip())
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
     if not parts or not parts[0]:
         import uuid

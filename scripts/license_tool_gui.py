@@ -14,16 +14,21 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from libs.hslicense import (ALL_CAPS, EDITION_CAPS, cluster_fingerprint,  # noqa: E402
-                            gen_keypair, sign_payload)
+from libs.hslicense import ALL_CAPS, EDITION_CAPS, cluster_fingerprint, gen_keypair, sign_payload
 
 if getattr(sys, "frozen", False):
     KEY_DIR = Path(sys.executable).resolve().parent / "license_keys"
 else:
     KEY_DIR = Path(__file__).resolve().parent / "dev_keys"
 
-BG = "#0b1420"; CARD = "#101c2c"; FG = "#d8e6f3"; DIM = "#7d93ac"
-CYAN = "#37b6ff"; GREEN = "#3dd68c"; YELLOW = "#ffc857"; RED = "#ff6b6b"
+BG = "#0b1420"
+CARD = "#101c2c"
+FG = "#d8e6f3"
+DIM = "#7d93ac"
+CYAN = "#37b6ff"
+GREEN = "#3dd68c"
+YELLOW = "#ffc857"
+RED = "#ff6b6b"
 CAP_LABELS = {
     "keyword": "关键字", "context": "上下文长度", "structure": "结构特征",
     "semantic": "语义例句", "replay": "决策回放", "alpha": "α激进度",
@@ -70,20 +75,24 @@ class App(tk.Tk):
 
     def _build(self) -> None:
         # ── 密钥区 ──
-        kf = ttk.Frame(self, style="Card.TFrame"); kf.pack(fill="x", padx=12, pady=(12, 6))
+        kf = ttk.Frame(self, style="Card.TFrame")
+        kf.pack(fill="x", padx=12, pady=(12, 6))
         ttk.Label(kf, text="① 密钥", style="H.TLabel").pack(anchor="w", padx=10, pady=(8, 2))
-        row = ttk.Frame(kf, style="Card.TFrame"); row.pack(fill="x", padx=10)
+        row = ttk.Frame(kf, style="Card.TFrame")
+        row.pack(fill="x", padx=10)
         ttk.Label(row, text="密钥目录", style="Card.TLabel").pack(side="left")
         self._entry(row, self.key_dir, width=44)
         ttk.Button(row, text="浏览…", command=self._pick_dir).pack(side="left", padx=4)
-        row2 = ttk.Frame(kf, style="Card.TFrame"); row2.pack(fill="x", padx=10, pady=6)
+        row2 = ttk.Frame(kf, style="Card.TFrame")
+        row2.pack(fill="x", padx=10, pady=6)
         ttk.Button(row2, text="生成密钥对（首次）", command=self._gen_key).pack(side="left")
         ttk.Button(row2, text="查看公钥", command=self._show_pubkey).pack(side="left", padx=6)
         self.key_state = ttk.Label(kf, text="", style="Dim.TLabel")
         self.key_state.pack(anchor="w", padx=10, pady=(0, 8))
 
         # ── 客户与基本 License ──
-        bf = ttk.Frame(self, style="Card.TFrame"); bf.pack(fill="x", padx=12, pady=6)
+        bf = ttk.Frame(self, style="Card.TFrame")
+        bf.pack(fill="x", padx=12, pady=6)
         ttk.Label(bf, text="② 客户与基本 License", style="H.TLabel").pack(anchor="w", padx=10, pady=(8, 2))
         self.customer = tk.StringVar()
         self.fingerprint = tk.StringVar()
@@ -91,47 +100,57 @@ class App(tk.Tk):
         self.expires = tk.StringVar()
         self.max_nodes = tk.IntVar(value=8)
         self.version_cap = tk.StringVar(value="1.x")
-        r = ttk.Frame(bf, style="Card.TFrame"); r.pack(fill="x", padx=10, pady=2)
+        r = ttk.Frame(bf, style="Card.TFrame")
+        r.pack(fill="x", padx=10, pady=2)
         ttk.Label(r, text="客户名称", style="Card.TLabel", width=12).pack(side="left")
         self._entry(r, self.customer, 44)
-        r = ttk.Frame(bf, style="Card.TFrame"); r.pack(fill="x", padx=10, pady=2)
+        r = ttk.Frame(bf, style="Card.TFrame")
+        r.pack(fill="x", padx=10, pady=2)
         ttk.Label(r, text="集群指纹", style="Card.TLabel", width=12).pack(side="left")
         self._entry(r, self.fingerprint, 44)
         ttk.Button(r, text="本机指纹", command=lambda: self.fingerprint.set(cluster_fingerprint())).pack(side="left")
-        r = ttk.Frame(bf, style="Card.TFrame"); r.pack(fill="x", padx=10, pady=2)
+        r = ttk.Frame(bf, style="Card.TFrame")
+        r.pack(fill="x", padx=10, pady=2)
         ttk.Label(r, text="授权模式", style="Card.TLabel", width=12).pack(side="left")
         ttk.Radiobutton(r, text="订阅年费", value="subscription", variable=self.base_mode).pack(side="left")
         ttk.Radiobutton(r, text="买断（永久当前大版本）", value="perpetual", variable=self.base_mode).pack(side="left", padx=8)
-        r = ttk.Frame(bf, style="Card.TFrame"); r.pack(fill="x", padx=10, pady=2)
+        r = ttk.Frame(bf, style="Card.TFrame")
+        r.pack(fill="x", padx=10, pady=2)
         ttk.Label(r, text="到期日", style="Card.TLabel", width=12).pack(side="left")
         self._entry(r, self.expires, 12)
         ttk.Label(r, text="YYYY-MM-DD（订阅制必填；买断留空）", style="Dim.TLabel").pack(side="left")
-        r = ttk.Frame(bf, style="Card.TFrame"); r.pack(fill="x", padx=10, pady=2)
+        r = ttk.Frame(bf, style="Card.TFrame")
+        r.pack(fill="x", padx=10, pady=2)
         ttk.Label(r, text="节点上限", style="Card.TLabel", width=12).pack(side="left")
         self._entry(r, self.max_nodes, 8)
         ttk.Label(r, text="0 = 不限", style="Dim.TLabel").pack(side="left")
-        r = ttk.Frame(bf, style="Card.TFrame"); r.pack(fill="x", padx=10, pady=(2, 8))
+        r = ttk.Frame(bf, style="Card.TFrame")
+        r.pack(fill="x", padx=10, pady=(2, 8))
         ttk.Label(r, text="版本范围", style="Card.TLabel", width=12).pack(side="left")
         self._entry(r, self.version_cap, 8)
         ttk.Label(r, text="买断制生效（如 1.x）", style="Dim.TLabel").pack(side="left")
 
         # ── 引擎授权 ──
-        ef = ttk.Frame(self, style="Card.TFrame"); ef.pack(fill="x", padx=12, pady=6)
+        ef = ttk.Frame(self, style="Card.TFrame")
+        ef.pack(fill="x", padx=12, pady=6)
         ttk.Label(ef, text="③ 路由引擎授权", style="H.TLabel").pack(anchor="w", padx=10, pady=(8, 2))
         self.edition = tk.StringVar(value="STD")
         self.engine_expires = tk.StringVar()
-        r = ttk.Frame(ef, style="Card.TFrame"); r.pack(fill="x", padx=10, pady=2)
+        r = ttk.Frame(ef, style="Card.TFrame")
+        r.pack(fill="x", padx=10, pady=2)
         ttk.Label(r, text="版本", style="Card.TLabel", width=12).pack(side="left")
         for ed in ("STD", "PRO", "ENT"):
             ttk.Radiobutton(r, text=ed, value=ed, variable=self.edition,
                             command=self._apply_edition).pack(side="left", padx=8)
-        r = ttk.Frame(ef, style="Card.TFrame"); r.pack(fill="x", padx=10, pady=2)
+        r = ttk.Frame(ef, style="Card.TFrame")
+        r.pack(fill="x", padx=10, pady=2)
         ttk.Label(r, text="引擎到期", style="Card.TLabel", width=12).pack(side="left")
         self._entry(r, self.engine_expires, 12)
         ttk.Label(r, text="留空 = 同基本 License", style="Dim.TLabel").pack(side="left")
         ttk.Label(ef, text="能力位（默认=版本全集，可裁剪）：", style="Dim.TLabel").pack(anchor="w", padx=10)
         self.cap_vars: dict[str, tk.BooleanVar] = {}
-        grid = ttk.Frame(ef, style="Card.TFrame"); grid.pack(fill="x", padx=10, pady=(2, 8))
+        grid = ttk.Frame(ef, style="Card.TFrame")
+        grid.pack(fill="x", padx=10, pady=(2, 8))
         for i, cap in enumerate(ALL_CAPS):
             v = tk.BooleanVar(value=False)
             self.cap_vars[cap] = v
@@ -139,7 +158,8 @@ class App(tk.Tk):
                             variable=v).grid(row=i // 3, column=i % 3, sticky="w", padx=6, pady=1)
 
         # ── 签发 ──
-        sf = ttk.Frame(self, style="Card.TFrame"); sf.pack(fill="x", padx=12, pady=6)
+        sf = ttk.Frame(self, style="Card.TFrame")
+        sf.pack(fill="x", padx=12, pady=6)
         ttk.Button(sf, text="④ 签发并保存 license.json", style="Accent.TButton",
                    command=self._sign).pack(padx=10, pady=10, fill="x")
         self.status = tk.Label(self, text="就绪", bg=BG, fg=DIM, anchor="w",

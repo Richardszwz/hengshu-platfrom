@@ -73,7 +73,7 @@ async def node_models(r, nid: str, *, complete_only: bool = True) -> list[str]:
                     continue
                 out.append(m["name"])
             return out
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         log.warning("node_models %s failed: %s", nid, e)
         return []
 
@@ -87,7 +87,7 @@ async def inventory(r) -> dict[str, list[str]]:
         if int(h.get("last_seen", "0")) > time.time() - 15:
             nids.append(k.removeprefix(NODE_PREFIX))
     out = await asyncio.gather(*(node_models(r, n) for n in nids))
-    return dict(zip(nids, out))
+    return dict(zip(nids, out, strict=False))
 
 
 async def _cred(r, nid: str) -> tuple[str, int, str, dict]:
@@ -160,7 +160,7 @@ async def copy_between_nodes(r, src: str, dst: str, model: str) -> None:
             # 失败清理临时名，不留半成品
             try:
                 await d.run(f"rm -rf {ddir}/{part}", check=False)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
             raise RuntimeError(f"tar 流拷贝失败 src_rc={src_rc} dst_rc={dst_rc}"
                                f"（{dst} 上已清理临时目录 {part}）")

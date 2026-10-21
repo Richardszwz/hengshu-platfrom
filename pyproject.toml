@@ -1,0 +1,31 @@
+[project]
+name = "hengshu"
+version = "1.0.0"
+description = "衡枢 HENGSHU —— 多机推理 API 负载均衡平台 + HSE 智能路由引擎"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "S", "BLE", "C4", "PIE", "RUF", "FURB"]
+ignore = [
+    "B008",    # FastAPI Depends() 惯用法
+    "BLE001",  # 容错路径刻意 blind-except（各点已注释说明）
+    "S110",    # try-except-pass 同上
+    "E501",    # 长行（中文注释/URL 多）
+    "RUF001", "RUF002", "RUF003",  # 中文全角标点（本项目文案为中文）
+    "S104",    # 0.0.0.0 绑定为部署需求
+    "S311",    # 负载均衡用 random，非加密场景
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S101"]   # pytest assert 惯例
+"scripts/fake_ssh_server.py" = ["S101"]
+"scripts/ws_term_test.py" = ["S101"]
+"scripts/mock_agent.py" = ["S101"]
+"scripts/vue_ref_scan.py" = ["E701"]   # 扫描器单行紧凑风格（工具脚本）
+"console/backend/app/deps.py" = ["S101"]     # 启动期断言（依赖未就绪即崩溃是设计）
+"router/app/main.py" = ["S101"]
+

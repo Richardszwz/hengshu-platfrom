@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 
 import fakeredis.aioredis
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
@@ -14,7 +13,7 @@ from hse.app.signals import ReqCtx, eval_context, eval_keyword, eval_structure
 
 
 def ctx(prompt="帮我写个 python 快排", **kw):
-    base = dict(prompt=prompt, all_text=prompt, ctx_tokens=50, hints={})
+    base = {"prompt": prompt, "all_text": prompt, "ctx_tokens": 50, "hints": {}}
     base.update(kw)
     return ReqCtx(**base)
 

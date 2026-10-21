@@ -22,11 +22,11 @@ from pydantic import BaseModel
 
 # 仓库根上 path（libs/hslicense 共享库）
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from libs import hslicense  # noqa: E402
+from libs import hslicense
 
-from .config import settings  # noqa: E402
-from .engine import Engine  # noqa: E402
-from .signals import ReqCtx  # noqa: E402
+from .config import settings
+from .engine import Engine
+from .signals import ReqCtx
 
 log = logging.getLogger("hengshu.hse")
 logging.basicConfig(level=logging.INFO)
@@ -48,7 +48,7 @@ async def license_state() -> hslicense.LicenseState:
     try:
         text = await r.get(settings.license_key)
         _lic_doc = json.loads(text) if text else None
-    except Exception:  # noqa: BLE001
+    except Exception:
         _lic_doc = None
     if _lic_doc is None:
         _lic_state = hslicense.empty_license()
@@ -66,7 +66,7 @@ async def _emit(level: str, msg: str) -> None:
         pipe.rpush("hs:events", item)
         pipe.ltrim("hs:events", -200, -1)
         await pipe.execute()
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
 
 

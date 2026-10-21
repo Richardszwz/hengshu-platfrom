@@ -29,7 +29,6 @@ def test_resolve_model_miss_falls_back():
 def test_tenant_auth_and_rate_limit() -> None:
     """租户 key：hs:tokens 反查 → 限额校验 → 滑动窗口 429；token 计量落 hs:tenant:*.tokens_total。"""
     async def run():
-        import time as _t
         fake = fakeredis.aioredis.FakeRedis(decode_responses=True)
         main._redis = fake
         await fake.hset("hs:tokens", "sk-tenant-abc", "t1")
@@ -42,7 +41,7 @@ def test_tenant_auth_and_rate_limit() -> None:
         # 未知 key → 401
         try:
             await main.auth_tenant({"token": "sk-wrong", "checked": False})
-            assert False, "should 401"
+            raise AssertionError("should 401")
         except main.HTTPException as e:
             assert e.status_code == 401
         # 滑动窗口：limit=2 → 第 3 次超限

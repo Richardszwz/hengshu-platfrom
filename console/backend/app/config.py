@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     # argon2 哈希（scripts/gen_admin_hash.py 生成）；空 = 拒绝登录（P0 安全兜底）
     admin_password_hash: str = ""
     # JWT 签名密钥
-    secret_key: str = "dev-only-insecure-secret-change-me"
+    secret_key: str = "dev-only-insecure-secret-change-me"  # noqa: S105  # 开发默认；生产必须 SECRET_KEY 环境变量覆盖
     token_ttl: int = 12 * 3600
 
     # 凭证主密钥（派生 AES-GCM 密钥；与 Router/Agent 同值）

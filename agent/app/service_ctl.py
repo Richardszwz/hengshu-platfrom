@@ -51,9 +51,9 @@ async def _run(cmd: list[str], timeout: float = 30.0) -> tuple[int, str]:
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
     try:
         out, _ = await asyncio.wait_for(p.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         p.kill()
-        raise HTTPException(504, f"cmd timeout: {cmd[0]}")
+        raise HTTPException(504, f"cmd timeout: {cmd[0]}") from None
     return p.returncode or 0, out.decode(errors="ignore")
 
 

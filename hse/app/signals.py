@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass, field
 
 _CJK_RE = re.compile(r"[一-鿿぀-ヿ가-힯]")
-_CODE_FENCE_RE = re.compile(r"```|~~~|^\s{4}\S", re.M)
+_CODE_FENCE_RE = re.compile(r"```|~~~|^\s{4}\S", re.MULTILINE)
 
 
 @dataclass

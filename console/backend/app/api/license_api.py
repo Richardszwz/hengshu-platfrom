@@ -12,10 +12,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
-from libs import hslicense  # noqa: E402
+from libs import hslicense
 
-from .. import deps  # noqa: E402
-from ..security import current_user, require_role  # noqa: E402
+from .. import deps
+from ..security import current_user, require_role
 
 LICENSE_KEY = "hs:license:file"
 

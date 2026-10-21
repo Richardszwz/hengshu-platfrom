@@ -11,8 +11,16 @@ import time
 from fastapi import APIRouter, Depends
 
 from .. import deps
-from ..keys import (EVENTS_KEY, INST_PREFIX, NODE_PREFIX, SESS_PREFIX,
-                    SER_QPS_KEY, SER_TPS_KEY, SER_TTFT_KEY, SER_UTIL_PREFIX)
+from ..keys import (
+    EVENTS_KEY,
+    INST_PREFIX,
+    NODE_PREFIX,
+    SER_QPS_KEY,
+    SER_TPS_KEY,
+    SER_TTFT_KEY,
+    SER_UTIL_PREFIX,
+    SESS_PREFIX,
+)
 from ..security import current_user
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"],

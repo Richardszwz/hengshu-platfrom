@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 
 import fakeredis.aioredis
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
@@ -18,7 +17,7 @@ def _run(coro):
 
 
 def ctx(prompt="这个函数报错了帮我看看", **kw):
-    base = dict(prompt=prompt, all_text=prompt, ctx_tokens=50, hints={})
+    base = {"prompt": prompt, "all_text": prompt, "ctx_tokens": 50, "hints": {}}
     base.update(kw)
     return ReqCtx(**base)
 

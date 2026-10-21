@@ -2,7 +2,9 @@
 """扫描 .vue 文件：模板/脚本里用到的标识符是否都在 script setup 中有定义。
 专抓回滚/重构误删定义类 bug（launchNodes/env 事件的同类）。
 启发式：提取 script 中的 const/let/function/import/props 声明 + 模板表达式根标识符，差集即嫌疑。"""
-import re, sys, glob, json
+import glob
+import json
+import re
 
 # JS/Vue 内建与模板编译器注入的标识符
 GLOBALS = set("""true false null undefined NaN Infinity Math JSON Object Array String Number Boolean Date
@@ -15,8 +17,8 @@ requestAnimationFrame cancelAnimationFrame structuredClone queueMicrotask Intl B
 
 def scan(path):
     src = open(path, encoding='utf-8').read()
-    m = re.search(r'<script setup[^>]*>(.*?)</script>', src, re.S)
-    t = re.search(r'<template>(.*?)</template>', src, re.S)
+    m = re.search(r'<script setup[^>]*>(.*?)</script>', src, re.DOTALL)
+    t = re.search(r'<template>(.*?)</template>', src, re.DOTALL)
     if not m or not t:
         return []
     script, template = m.group(1), t.group(1)
@@ -47,13 +49,13 @@ def scan(path):
             p = p.strip().split(':')[0].strip()
             if p: declared.add(p)
     # defineProps<{ a: string; b?: number }>() 泛型形式（TS 字面量 props）
-    for d in re.finditer(r'defineProps<\s*\{([^}]*)\}', script, re.S):
+    for d in re.finditer(r'defineProps<\s*\{([^}]*)\}', script, re.DOTALL):
         for part in d.group(1).split(';'):
             nm = part.split(':')[0].strip().rstrip('?')
             if re.match(r'^[A-Za-z_$][\w$]*$', nm): declared.add(nm)
 
     # 模板表达式：{{ ... }}、:attr="..."、@evt="..."、v-if/for/show/model
-    exprs = re.findall(r'\{\{(.*?)\}\}', template, re.S)
+    exprs = re.findall(r'\{\{(.*?)\}\}', template, re.DOTALL)
     exprs += re.findall(r'(?:^|\s)[:@#][\w.-]+(?:\[[^\]]*\])?="([^"]*)"', template)
     exprs += re.findall(r'\sv-(?:if|else-if|show|model(?:\.\w+)*|for|slot:[\w-]+)="([^"]*)"', template)
 
@@ -94,7 +96,7 @@ def scan(path):
             if name in ('in', 'of', 'as', 'true', 'false', 'null', 'undefined', 'typeof', 'new', 'delete', 'void', 'instanceof', 'HTMLSelectElement', 'HTMLInputElement'):
                 continue
             suspects.setdefault(name, ex.strip()[:100])
-    return [(k, v) for k, v in suspects.items()]
+    return list(suspects.items())
 
 all_bad = {}
 for f in glob.glob(r'D:\hengshu\console\frontend\src\**\*.vue', recursive=True):

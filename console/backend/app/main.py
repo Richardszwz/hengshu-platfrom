@@ -8,7 +8,20 @@ import uvicorn
 from fastapi import FastAPI
 
 from . import deps, term
-from .api import auth, dashboard, nodes, rules, services, settings_api, tenants, audits, users, license_api, hse_rules, hse_embed
+from .api import (
+    audits,
+    auth,
+    dashboard,
+    hse_embed,
+    hse_rules,
+    license_api,
+    nodes,
+    rules,
+    services,
+    settings_api,
+    tenants,
+    users,
+)
 from .config import settings
 
 app = FastAPI(title="衡枢 Console", version="0.1.0")

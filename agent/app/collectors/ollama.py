@@ -20,8 +20,6 @@ class OllamaCollector:
         async with httpx.AsyncClient(timeout=5.0) as c:
             data = (await c.get(f"{base_url}/api/ps")).json()
         models = data.get("models", [])
-        vram = sum(m.get("size_vram", 0) for m in models)
-        total = 0.0   # 显存总量由 GpuSysSampler 提供；此处只记会话数
         return Sample(
             vram=0.0,
             sessions=len(models),

@@ -19,8 +19,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from libs.hslicense import (ALL_CAPS, EDITION_CAPS, cluster_fingerprint,
-                            gen_keypair, sign_payload)
+from libs.hslicense import ALL_CAPS, EDITION_CAPS, cluster_fingerprint, gen_keypair, sign_payload
 
 # 密钥目录：源码模式=脚本旁 dev_keys/；PyInstaller exe 模式=exe 旁 license_keys/
 if getattr(sys, "frozen", False):

@@ -53,11 +53,11 @@ class JudgeClient:
                                         "max_tokens": 512,
                                         "messages": [{"role": "user", "content": q}]})).json()
             ans = (d["choices"][0]["message"]["content"] or "").strip()
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None, "judge_down"
         # 推理模型加固：剥 <think> 思考块（含被 max_tokens 截断的未闭合块）
-        ans = re.sub(r"<think>.*?</think>", " ", ans, flags=re.S | re.I)
-        ans = re.sub(r"<think>.*$", " ", ans, flags=re.S | re.I).strip()
+        ans = re.sub(r"<think>.*?</think>", " ", ans, flags=re.DOTALL | re.IGNORECASE)
+        ans = re.sub(r"<think>.*$", " ", ans, flags=re.DOTALL | re.IGNORECASE).strip()
         verdict: bool | None
         up = ans.upper()
         # 优先看结尾（推理模型结论在最后），再看开头，最后全文找
@@ -66,9 +66,9 @@ class JudgeClient:
             verdict = True
         elif "NO" in tail or "否" in tail:
             verdict = False
-        elif up.startswith("YES") or up.startswith("是"):
+        elif up.startswith(("YES", "是")):
             verdict = True
-        elif up.startswith("NO") or up.startswith("否"):
+        elif up.startswith(("NO", "否")):
             verdict = False
         elif "YES" in up:
             verdict = True

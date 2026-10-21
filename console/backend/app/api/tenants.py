@@ -9,8 +9,8 @@ from pydantic import BaseModel, Field
 
 from .. import deps
 from ..keys import TENANT_PREFIX
+from ..license_guard import require_active_base, require_engine_cap
 from ..security import current_user, require_role
-from ..license_guard import require_active_base, check_node_cap, require_engine_cap
 
 router = APIRouter(prefix="/api/tenants", tags=["tenants"],
                    dependencies=[Depends(current_user)])

@@ -25,7 +25,7 @@ async def _resolve_url() -> str:
         v = await deps.get().hget("hs:settings", "webhook_url")
         if v is not None:
             return v
-    except Exception:  # noqa: BLE001 —— redis 不可用时回退 env
+    except Exception:
         pass
     return URL_ENV
 
@@ -39,5 +39,5 @@ async def emit(kind: str, payload: dict) -> None:
     try:
         async with httpx.AsyncClient(timeout=5.0) as c:
             await c.post(url, json=body)
-    except Exception as e:  # noqa: BLE001 —— 通知失败不能影响主流程
+    except Exception as e:
         log.warning("webhook %s → %s failed: %s", kind, url, e)

@@ -20,14 +20,15 @@ import uvicorn
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+from . import netinfo, rayctl, service_ctl
 from .collectors.base import CollectorRegistry, Sample
-from .collectors.gpu_sys import sample as gpu_sample, start as gpu_start
+from .collectors.gpu_sys import sample as gpu_sample
+from .collectors.gpu_sys import start as gpu_start
 from .collectors.ollama import OllamaCollector
-from .collectors.trt import TrtCollector
 from .collectors.tgi import TgiCollector
+from .collectors.trt import TrtCollector
 from .collectors.vllm import VllmCollector
 from .config import settings
-from . import netinfo, rayctl, service_ctl
 from .service_ctl import ServiceCtl, StartRequest, container_state, is_running
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -45,7 +46,7 @@ def _load_services() -> None:
         if os.path.isfile(_SERVICES_FILE):
             INSTANCES.extend(json.load(open(_SERVICES_FILE)))
             log.info("restored %d services from %s", len(INSTANCES), _SERVICES_FILE)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         log.warning("load services failed: %s", e)
 
 
@@ -54,7 +55,7 @@ def _save_services() -> None:
         os.makedirs(_STATE_DIR, exist_ok=True)
         with open(_SERVICES_FILE, "w") as f:
             json.dump(INSTANCES, f, ensure_ascii=False)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         log.warning("save services failed: %s", e)
 
 
@@ -69,7 +70,7 @@ def _advertise_host() -> str:
         ip = s.getsockname()[0]
         s.close()
         return ip
-    except Exception:  # noqa: BLE001
+    except Exception:
         return socket.gethostname()
 
 
@@ -87,8 +88,20 @@ _redis: aioredis.Redis | None = None
 
 
 def redis() -> aioredis.Redis:
-    assert _redis is not None, "redis not connected"
+    if _redis is None:
+        raise RuntimeError("redis not connected")
     return _redis
+
+
+# fire-and-forget 后台任务持引用集合（防 GC 回收运行中任务，RUF006）
+_BG_TASKS: set[asyncio.Task] = set()
+
+
+def fire_bg(coro) -> asyncio.Task:
+    t = asyncio.create_task(coro)
+    _BG_TASKS.add(t)
+    t.add_done_callback(_BG_TASKS.discard)
+    return t
 
 
 @app.on_event("startup")
@@ -97,7 +110,7 @@ async def _startup() -> None:
     _redis = aioredis.from_url(settings.redis_url, decode_responses=True)
     await gpu_start()  # pynvml 可用则用之，否则起 tegrastats 后台
     _load_services()   # 恢复控制台下发过的服务清单
-    asyncio.create_task(heartbeat_loop())
+    fire_bg(heartbeat_loop())
 
 
 @app.get("/healthz")
@@ -170,8 +183,8 @@ async def _start_bg(req: StartRequest) -> None:
             INSTANCES.append(spec)
         _save_services()
         await _push_event("OK", f"svc ▸ {req.name} 启动完成: {result}")
-        asyncio.create_task(_watch_started(req))  # 巡检：崩溃即把容器日志抓进节点日志
-    except Exception as e:  # noqa: BLE001
+        fire_bg(_watch_started(req))  # 巡检：崩溃即把容器日志抓进节点日志
+    except Exception as e:
         await _push_event("ERR", f"svc ▸ {req.name} 启动失败: {e}")
 
 
@@ -187,7 +200,7 @@ async def _push_event(level: str, msg: str) -> None:
             p.rpush(f"hs:nodelog:{settings.node_id}", line)
             p.ltrim(f"hs:nodelog:{settings.node_id}", -200, -1)
             await p.execute()
-    except Exception:  # noqa: BLE001 —— 事件上报失败不影响主流程
+    except Exception:
         pass
 
 
@@ -204,7 +217,7 @@ async def start(req: StartRequest) -> dict:
         finally:
             _INFLIGHT.discard(req.name)
 
-    asyncio.create_task(_wrap())
+    fire_bg(_wrap())
     return {"accepted": req.name, "note": "启动中（镜像拉取可能需要数分钟），实例就绪后自动上线"}
 
 
@@ -242,7 +255,7 @@ async def shutdown() -> dict:
             await p.wait()
         os._exit(0)
 
-    asyncio.create_task(_kill())
+    fire_bg(_kill())
     return {"stopping": True, "container": cname}
 
 
@@ -443,7 +456,7 @@ async def heartbeat_loop() -> None:
                 pipe.expire(f"hs:inst:{iid}", ttl)
                 pipe.sadd(f"hs:model:{inst['model']}", iid)
             await pipe.execute()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.warning("heartbeat failed: %s", e)
         await asyncio.sleep(settings.heartbeat_interval)
 
@@ -456,7 +469,7 @@ async def _collect(inst: dict, url: str) -> Sample:
         if not await c.probe(url):
             return Sample()
         return await c.collect(url)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         log.debug("collect %s failed: %s", inst["framework"], e)
         return Sample()
 
@@ -489,5 +502,5 @@ async def models_download(req: ModelDlReq) -> dict:
         await _push_event("OK" if res["ok"] else "ERR",
                           f"model ▸ 拉取 {req.repo} {'完成' if res['ok'] else '失败'}: "
                           + " / ".join(res["tail"][-2:])[:200])
-    asyncio.create_task(_bg())
+    fire_bg(_bg())
     return {"accepted": req.repo, "note": "拉取中（进度见节点系统日志）"}

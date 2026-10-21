@@ -19,9 +19,9 @@ async def _run(args: list[str], timeout: float = 60.0) -> tuple[int, str]:
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         return proc.returncode or 0, out.decode(errors="replace")
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return -1, f"timeout {timeout}s"
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return -1, f"{type(e).__name__}: {e}"
 
 

@@ -13,9 +13,7 @@ import asyncio
 import json
 import math
 import os
-import platform
 import random
-import socket
 import time
 
 import redis

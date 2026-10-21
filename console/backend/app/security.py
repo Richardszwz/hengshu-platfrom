@@ -6,7 +6,7 @@ import time
 import jwt
 from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError, VerifyMismatchError
-from fastapi import Depends, HTTPException, Request
+from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from . import deps, users_store

@@ -12,8 +12,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from .. import deps
+from ..license_guard import require_active_base, require_engine_cap
 from ..security import current_user, require_role
-from ..license_guard import require_active_base, check_node_cap, require_engine_cap
 
 RULES_KEY = "hs:hse:rules"
 

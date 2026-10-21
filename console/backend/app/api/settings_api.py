@@ -39,7 +39,7 @@ async def get_settings(r=Depends(deps.get)) -> dict:
     try:
         await r.ping()
         redis_ok = True
-    except Exception:  # noqa: BLE001
+    except Exception:
         redis_ok = False
     return {
         "webhook_url": webhook,

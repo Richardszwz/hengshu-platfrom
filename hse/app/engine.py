@@ -65,7 +65,7 @@ class Engine:
                 rules.sort(key=lambda d: int(d.get("priority", 0)), reverse=True)
                 self._rules = rules
                 self._rules_at = now
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass  # Redis 抖动时用旧缓存
         return self._rules
 
@@ -81,7 +81,7 @@ class Engine:
                     self.embedder.configure(url, model)
                 self.judge.configure(self._cfg.get("judge_url", ""),
                                      self._cfg.get("judge_model", ""))
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
             self._cfg_at = now
         return self._cfg
@@ -134,7 +134,7 @@ class Engine:
             pipe.rpush("hs:hse:replay", item)
             pipe.ltrim("hs:hse:replay", -500, -1)
             await pipe.execute()
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
 
     async def decide(self, ctx: ReqCtx, caps: list[str]) -> dict[str, Any]:
@@ -147,7 +147,7 @@ class Engine:
             raw_cfg = await self.r.hgetall("hs:hse:modelcfg")
             costs = {m: float(json.loads(c).get("cost", 0)) for m, c in raw_cfg.items()}
             modelcfg = {m: json.loads(c) for m, c in raw_cfg.items()}
-        except Exception:  # noqa: BLE001
+        except Exception:
             costs, modelcfg = {}, {}
 
         skipped: list[str] = []
@@ -163,7 +163,7 @@ class Engine:
                 continue
             fired: list[str] = []
             ok = True
-            for sig_name, ev in EVALUATORS.items():
+            for _sig_name, ev in EVALUATORS.items():
                 passed, note = ev(when, ctx)
                 if not passed:
                     ok = False

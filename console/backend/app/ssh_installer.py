@@ -118,7 +118,7 @@ async def install(r: aioredis.Redis, *, node_id: str, host: str, ssh_port: int,
                 if await asyncio.to_thread(os.path.exists, tar_path):
                     await log("INFO", f"install ▸ 气隙模式装载 {tar_path}")
                     async with conn.start_sftp_client() as sftp:
-                        await sftp.put(tar_path, "/tmp/hengshu-agent.tar")
+                        await sftp.put(tar_path, "/tmp/hengshu-agent.tar")  # noqa: S108  # 目标机标准临时目录
                     load_out = await _run(conn, f"{docker_cmd} load -i /tmp/hengshu-agent.tar", timeout=300)
                     await _run(conn, "rm -f /tmp/hengshu-agent.tar")
                     # docker load 失败（格式不符/损坏）必须显式报错，否则 docker run 才暴露且难排查
@@ -154,7 +154,7 @@ async def install(r: aioredis.Redis, *, node_id: str, host: str, ssh_port: int,
 
         await log("OK", f"install ▸ {node_id} 纳管完成,等待首次心跳上线")
         return {"node_id": node_id, "arch": arch, "docker": docker_v, "steps": steps}
-    except (asyncssh.Error, asyncio.TimeoutError, RuntimeError, OSError) as e:
+    except (TimeoutError, asyncssh.Error, RuntimeError, OSError) as e:
         msg = str(e) or f"{type(e).__name__}（连接超时/被重置/协议失败，详见控制台日志）"
         await log("ERROR", f"install ▸ {node_id} 失败: {msg}")
         return {"node_id": node_id, "error": msg, "steps": steps}

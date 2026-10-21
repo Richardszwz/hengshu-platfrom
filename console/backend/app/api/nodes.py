@@ -11,8 +11,8 @@ from pydantic import BaseModel, Field
 from .. import deps, hooks
 from ..crypto import decrypt, encrypt
 from ..keys import CRED_PREFIX, INST_PREFIX, NODE_PREFIX
+from ..license_guard import check_node_cap, require_active_base
 from ..security import current_user, require_role
-from ..license_guard import require_active_base, check_node_cap
 
 router = APIRouter(prefix="/api/nodes", tags=["nodes"], dependencies=[Depends(current_user)])
 
@@ -118,8 +118,8 @@ async def add_node(req: NodeAddReq, r=Depends(deps.get)) -> dict:
 @router.post("/{node_id}/install", dependencies=[Depends(require_role("operator")), Depends(require_active_base)])
 async def install_node(node_id: str, req: NodeAddReq, r=Depends(deps.get)) -> dict:
     """存凭证 → SSH 推送安装 Agent 容器 → 心跳自动上线。"""
-    from ..config import settings
     from .. import ssh_installer
+    from ..config import settings
 
     if req.node_id != node_id:
         raise HTTPException(400, "node_id mismatch")
@@ -194,7 +194,7 @@ async def stop_agent(node_id: str, r=Depends(deps.get)) -> dict:
         async with httpx.AsyncClient(timeout=5.0, trust_env=False) as c:
             resp = await c.post(f"{addr}/shutdown")
         out = resp.json()
-    except Exception as e:  # noqa: BLE001 —— Agent 自杀可能秒断连，视为已停止
+    except Exception as e:
         out = {"stopping": True, "note": f"连接中断（预期内）: {type(e).__name__}"}
     await hooks.emit("node.stop_agent", {"node_id": node_id, "result": out})
     return {"node_id": node_id, **out}
@@ -208,7 +208,7 @@ async def remove_node(node_id: str, r=Depends(deps.get)) -> dict:
     await r.delete(f"{NODE_PREFIX}{node_id}", f"{CRED_PREFIX}{node_id}",
                    f"hs:conn:{node_id}")
     # 清理该节点在模型集合里的实例登记（实例 hash 本身随 TTL 过期）
-    for mk in await r.keys(f"hs:model:*"):
+    for mk in await r.keys("hs:model:*"):
         for iid in await r.smembers(mk):
             if iid.startswith(f"{node_id}:"):
                 await r.srem(mk, iid)
@@ -271,7 +271,7 @@ async def nccl_test(req: NcclTestIn, r=Depends(deps.get)) -> dict:
             async with httpx.AsyncClient(timeout=170.0, trust_env=False) as c:
                 resp = await c.post(f"{info['addr']}/nccl-test", json=payload)
                 d = resp.json()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             d = {"ok": False, "tail": [f"{type(e).__name__}: {e}"]}
         d["node"] = nid
         d["ip"] = info["ip"]
@@ -325,7 +325,7 @@ async def net_test(req: NetTestIn, r=Depends(deps.get)) -> dict:
         try:
             async with httpx.AsyncClient(timeout=60.0, trust_env=False) as c:
                 d = (await c.post(f"{a_addr}/net/ping", json={"target_ip": b_ip})).json()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             d = {"ok": False, "error": f"{type(e).__name__}: {e}"}
         d["dir"] = f"{a} → {b}"
         return d
@@ -367,7 +367,7 @@ async def ssh_mesh(req: SshMeshIn, r=Depends(deps.get)) -> dict:
                             "([ -f ~/.ssh/id_ed25519 ] || ssh-keygen -t ed25519 -N '' "
                             "-f ~/.ssh/id_ed25519 -q)", check=True)
                 pubs[nid] = (await c.run("cat ~/.ssh/id_ed25519.pub", check=True)).stdout.strip()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             errors[nid] = f"{type(e).__name__}: {e}"
     if len(pubs) < 2:
         raise HTTPException(502, f"公钥收集失败: {errors}")
@@ -379,7 +379,7 @@ async def ssh_mesh(req: SshMeshIn, r=Depends(deps.get)) -> dict:
                     await c.run("touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && "
                                 f"(grep -qxF '{pub}' ~/.ssh/authorized_keys || "
                                 f"echo '{pub}' >> ~/.ssh/authorized_keys)", check=True)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             errors[nid] = f"{type(e).__name__}: {e}"
     return {"ok": not errors, "meshed": sorted(pubs), "errors": errors}
 
@@ -395,7 +395,7 @@ async def nccl_env(node_id: str, r=Depends(deps.get)) -> dict:
     try:
         async with httpx.AsyncClient(timeout=1900.0, trust_env=False) as c:
             return (await c.post(f"{addr}/nccl-env/deploy", json={})).json()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         raise HTTPException(502, f"无法连接节点 Agent（{addr}）：{type(e).__name__} {e}") from e
 
 
@@ -416,5 +416,5 @@ async def nic_config(node_id: str, req: NicConfigIn, r=Depends(deps.get)) -> dic
     try:
         async with httpx.AsyncClient(timeout=60.0, trust_env=False) as c:
             return (await c.post(f"{addr}/nic/config", json=req.model_dump())).json()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         raise HTTPException(502, f"无法连接节点 Agent（{addr}）：{type(e).__name__} {e}") from e

@@ -18,7 +18,7 @@ def _run(coro):
 
 
 def ctx(prompt="设计一个分布式缓存一致性协议并证明其正确性", **kw):
-    base = dict(prompt=prompt, all_text=prompt, ctx_tokens=50, hints={})
+    base = {"prompt": prompt, "all_text": prompt, "ctx_tokens": 50, "hints": {}}
     base.update(kw)
     return ReqCtx(**base)
 
@@ -91,9 +91,13 @@ def test_judge_cap_required():
 
 def test_judge_client_parse_and_cache():
     """真实 HTTP 路径：假 chat 端点回 YES/NO，第二次走缓存。"""
+    import socket
+    import threading
+    import time as _t
+
+    import uvicorn
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    import threading, uvicorn, socket, time as _t
 
     app = FastAPI()
     calls = {"n": 0}
@@ -103,15 +107,17 @@ def test_judge_client_parse_and_cache():
         calls["n"] += 1
         return {"choices": [{"message": {"content": "YES"}}]}
 
-    sock = socket.socket(); sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]; sock.close()
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
     cfg = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
     srv = uvicorn.Server(cfg)
     t = threading.Thread(target=srv.run, daemon=True)
     t.start()
     for _ in range(50):
         try:
-            TestClient(app)  # noqa
+            TestClient(app)
             break
         except Exception:
             _t.sleep(0.05)

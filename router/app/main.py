@@ -18,7 +18,7 @@ import uuid
 import httpx
 import redis.asyncio as aioredis
 import uvicorn
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
@@ -120,7 +120,7 @@ async def _engine_caps() -> set[str]:
     try:
         raw = await redis().get("hs:license:file")
         caps = set((json.loads(raw).get("engine") or {}).get("caps") or []) if raw else set()
-    except Exception:  # noqa: BLE001
+    except Exception:
         caps = _caps_cache[1]  # 抖动用旧缓存
     _caps_cache = (now, caps)
     return caps
@@ -136,7 +136,7 @@ def _prefix_hash(messages: list[dict]) -> str:
     first = str(first)[:64]
     if len(first) < 16:      # 太短的前缀没有亲和价值
         return ""
-    return hashlib.sha1(first.encode()).hexdigest()[:16]
+    return hashlib.sha1(first.encode(), usedforsecurity=False).hexdigest()[:16]
 
 
 # ---------- OpenAI 兼容 ----------
@@ -171,7 +171,7 @@ async def images(req: ImageReq, ctx: dict = Depends(auth)) -> Response:
     if allowed:
         pool = [c for c in pool if c.model in allowed]
     if not pool:
-        raise HTTPException(503, f"no live image instance"
+        raise HTTPException(503, "no live image instance"
                                  + (f" for model '{req.model}'" if req.model else "（无图像生成服务在线）"))
     inst = pick(pool, None)
     payload = req.model_dump(exclude_none=True)
@@ -183,7 +183,7 @@ async def images(req: ImageReq, ctx: dict = Depends(auth)) -> Response:
             body["instance"] = inst.inst_id
         return JSONResponse(body, status_code=resp.status_code)
     except (httpx.HTTPError, json.JSONDecodeError, OSError) as e:
-        raise HTTPException(502, f"image upstream {inst.inst_id}: {type(e).__name__} {e}")
+        raise HTTPException(502, f"image upstream {inst.inst_id}: {type(e).__name__} {e}") from e
 
 
 @app.get("/healthz")
@@ -243,7 +243,7 @@ async def hse_decide(messages: list[dict]) -> tuple[str | None, str | None]:
             return None, None
         dec = d.get("decision") or {}
         return dec.get("model"), dec.get("tier")
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None, None  # 引擎失联/超时 → 默认池（fail-open）
 
 

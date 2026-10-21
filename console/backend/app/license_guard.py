@@ -9,15 +9,14 @@ from __future__ import annotations
 
 import json
 import sys
-import time
 from pathlib import Path
 
 from fastapi import Depends, HTTPException
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-from libs import hslicense  # noqa: E402
+from libs import hslicense
 
-from . import deps  # noqa: E402
+from . import deps
 
 LICENSE_KEY = "hs:license:file"
 
@@ -57,7 +56,6 @@ async def check_node_cap(r) -> None:
         return
     keys = await r.keys("hs:node:*")
     alive = 0
-    now = time.time()
     for k in keys:
         h = await r.hgetall(k)
         if h and not (await r.get(f"hs:node_del:{k.removeprefix('hs:node:')}")):

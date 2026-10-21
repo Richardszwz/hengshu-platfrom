@@ -64,7 +64,8 @@ class TegraSampler:
                 "tegrastats", "--interval", str(self.interval),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL)
-            assert self._proc.stdout is not None
+            if self._proc.stdout is None:
+                raise RuntimeError("tegrastats stdout unavailable")
             while True:
                 raw = await self._proc.stdout.readline()
                 if not raw:

@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
-import logging
 
 log = logging.getLogger("agent.netinfo")
 
@@ -52,7 +52,7 @@ async def collect_host_nics(timeout: float = 25.0) -> list[dict]:
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         return parse_nics(out.decode(errors="replace"))
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         log.warning("collect_host_nics failed: %s", e)
         return []
 
@@ -79,7 +79,7 @@ async def nic_config(name: str, ip_cidr: str = "", up: bool | None = None) -> di
         if proc.returncode != 0:
             return {"ok": False, "error": out.decode(errors="replace").strip()[:200]}
         return {"ok": True, "nics": await collect_host_nics()}
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
@@ -100,9 +100,9 @@ async def net_ping(target_ip: str, count: int = 3, timeout: float = 30.0) -> dic
             return {"ok": True, "loss_pct": int(loss.group(1)),
                     "rtt_ms": float(rtt.group(1)) if rtt else None}
         return {"ok": False, "error": (text.strip().splitlines() or ["no output"])[-1][:200]}
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return {"ok": False, "error": f"timeout {timeout}s"}
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
@@ -112,7 +112,7 @@ async def _run_quiet(args: list[str], timeout: float = 20.0) -> int:
             *args, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
         await asyncio.wait_for(proc.wait(), timeout=timeout)
         return proc.returncode or 0
-    except Exception:  # noqa: BLE001
+    except Exception:
         return -1
 
 
@@ -149,9 +149,9 @@ async def _docker(args: list[str], timeout: float) -> tuple[int, str]:
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         return proc.returncode or 0, out.decode(errors="replace")
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return -1, f"timeout {timeout}s"
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return -1, f"{type(e).__name__}: {e}"
 
 
@@ -213,9 +213,9 @@ async def run_nccl_test(*, rank: int, world: int, master_addr: str,
         text = out.decode(errors="replace")
         ok = proc.returncode == 0 and "NCCL_RESULT ok" in text
         return {"ok": ok, "rank": rank, "tail": text.strip().splitlines()[-40:]}
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return {"ok": False, "rank": rank, "tail": [f"timeout {timeout}s"]}
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return {"ok": False, "rank": rank, "tail": [f"{type(e).__name__}: {e}"]}
 
 
@@ -248,7 +248,7 @@ async def list_models(host_dir: str) -> list[dict]:
             if line.startswith("["):
                 return json.loads(line)
         return []
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         log.warning("list_models failed: %s", e)
         return []
 
@@ -271,7 +271,7 @@ async def download_model(repo: str, host_dir: str, name: str,
         ok = proc.returncode == 0
         tail = out.decode(errors="replace").strip().splitlines()
         return {"ok": ok, "tail": tail[-6:]}
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return {"ok": False, "tail": [f"timeout {timeout}s"]}
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return {"ok": False, "tail": [f"{type(e).__name__}: {e}"]}

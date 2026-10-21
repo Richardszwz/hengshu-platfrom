@@ -15,15 +15,14 @@ import time
 
 import asyncssh
 import jwt
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi import Depends
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from redis.asyncio import Redis
 
 from . import deps, hooks, users_store
 from .config import settings
 from .crypto import decrypt
-from .keys import CRED_PREFIX, NODE_PREFIX
+from .keys import CRED_PREFIX
 from .security import require_role
 
 log = logging.getLogger("hengshu.term")
@@ -32,7 +31,7 @@ router = APIRouter()
 
 RECORD_DIR = os.getenv("TERM_RECORD_DIR", "D:/hengshu/recordings")
 # 高危命令模式（分号分隔，逐行输入时命中即拦截）
-BLACKLIST = [re.compile(p, re.I) for p in os.getenv(
+BLACKLIST = [re.compile(p, re.IGNORECASE) for p in os.getenv(
     "TERM_BLACKLIST",
     r"rm\s+(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r)\s+/(\s|$);mkfs;"
     r"dd\s+if=.*of=/dev/(sd|nvme|hd);:>\s*/dev/sd;"
@@ -49,7 +48,7 @@ async def _ws_auth(token: str | None, r: Redis) -> str:
         raise PermissionError("missing token")
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         raise PermissionError("bad token") from e
     sub = payload.get("sub", "unknown")
     user = await users_store.get_user(r, sub)
@@ -66,7 +65,7 @@ async def _audit(r: Redis, level: str, msg: str) -> None:
         await r.lpush("hs:events", json.dumps(
             {"ts": int(time.time() * 1000), "level": level, "msg": msg}, ensure_ascii=False))
         await r.ltrim("hs:events", 0, 499)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         log.warning("audit write failed: %s", e)
 
 
@@ -77,7 +76,7 @@ class _Recorder:
         self.path = path
         self.t0 = time.time()
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        self.f = open(path, "w", encoding="utf-8")  # noqa: SIM115
+        self.f = open(path, "w", encoding="utf-8")
         self.f.write(json.dumps({"version": 2, "width": cols, "height": rows,
                                  "timestamp": int(self.t0),
                                  "env": {"TERM": "xterm-256color", "SHELL": "/bin/bash"}}) + "\n")
@@ -92,7 +91,7 @@ class _Recorder:
     def close(self) -> None:
         try:
             self.f.close()
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
 
 
@@ -125,7 +124,7 @@ async def term_ws(ws: WebSocket) -> None:
                           "client_keys": [asyncssh.import_private_key(secret)]}
         else:
             connect_kw = {"username": username, "password": secret}
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         await ws.send_json({"type": "err", "msg": f"凭证解析失败: {e}"})
         await ws.close()
         return
@@ -198,10 +197,10 @@ async def term_ws(ws: WebSocket) -> None:
         for t in done:
             if t.exception():
                 raise t.exception()
-    except (WebSocketDisconnect, asyncssh.Error, asyncio.TimeoutError, OSError) as e:
+    except (TimeoutError, WebSocketDisconnect, asyncssh.Error, OSError) as e:
         try:
             await ws.send_json({"type": "err", "msg": str(e) or type(e).__name__})
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
     finally:
         if proc:
@@ -213,7 +212,7 @@ async def term_ws(ws: WebSocket) -> None:
         await _audit(r, "AUDIT", f"term ▸ {user} 断开 {node_id}")
         try:
             await ws.close()
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
 
 

@@ -21,7 +21,7 @@ _PREV: dict[str, tuple[float, float, float, float]] = {}
 def _gauge(text: str, name: str) -> float:
     """带标签的 gauge/counter 当前值（多 engine 取最后一行）。"""
     val = 0.0
-    for m in re.finditer(rf"^{re.escape(name)}\{{[^}}]*\}}\s+([\d.eE+\-]+)\s*$", text, re.M):
+    for m in re.finditer(rf"^{re.escape(name)}\{{[^}}]*\}}\s+([\d.eE+\-]+)\s*$", text, re.MULTILINE):
         val = float(m.group(1))
     return val
 

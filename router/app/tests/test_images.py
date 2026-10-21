@@ -6,7 +6,6 @@ from pathlib import Path
 
 import fakeredis.aioredis
 import pytest
-from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -87,9 +86,10 @@ def test_images_endpoint_route(monkeypatch):
 
 
 def test_images_403_when_whitelist_excludes(monkeypatch):
+    from fastapi import HTTPException
+
     import app.main as m
     from app.registry import Registry
-    from fastapi import HTTPException
 
     r = fakeredis.aioredis.FakeRedis(decode_responses=True)
     _seed(r)

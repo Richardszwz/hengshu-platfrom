@@ -6,7 +6,6 @@ from typing import Any
 
 import redis.asyncio as aioredis
 
-from .config import settings
 from .keys import INST_PREFIX, MODEL_PREFIX
 
 
@@ -46,7 +45,7 @@ class Registry:
             pipe.hgetall(f"{INST_PREFIX}{m}")
         rows = await pipe.execute()
         out: list[Instance] = []
-        for m, h in zip(members, rows):
+        for m, h in zip(members, rows, strict=False):
             if not h:                       # key 过期 = 实例失联
                 continue
             node_id, _, port = m.partition(":")
