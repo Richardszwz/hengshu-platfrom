@@ -65,3 +65,17 @@ async def check_node_cap(r) -> None:
     if alive >= st.max_nodes:
         raise HTTPException(
             403, f"已达 License 节点上限（{st.max_nodes}），请扩容授权或删除闲置节点")
+
+
+def require_engine_cap(cap: str):
+    """引擎能力位守卫：语义引擎部署等 PRO/ENT 功能要求对应能力位。
+
+    基本 License 先决（同 require_active_base）；再看 engine.caps 含 cap。
+    """
+    async def guard(r=Depends(deps.get)) -> hslicense.LicenseState:
+        st = await require_active_base(r)
+        if cap not in (st.caps or []):
+            raise HTTPException(
+                403, f"该功能需要引擎授权能力「{cap}」（PRO/ENT License，系统设置 → 授权）")
+        return st
+    return guard

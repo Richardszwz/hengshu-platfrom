@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from .. import deps
-from ..license_guard import require_active_base
+from ..license_guard import require_active_base, require_engine_cap
 from ..security import require_role
 
 router = APIRouter(prefix="/api/hse/embed", tags=["hse-embed"])
@@ -186,7 +186,7 @@ async def _deploy_local(r, req: DeployIn) -> str:
 
 
 # ---------- API ----------
-@router.get("/status")
+@router.get("/status", dependencies=[Depends(require_engine_cap("semantic"))])
 async def status(r=Depends(deps.get)) -> dict:
     cfg = await r.hgetall(CONFIG_KEY)
     url = cfg.get("embedding_url", "")
@@ -199,7 +199,7 @@ async def status(r=Depends(deps.get)) -> dict:
             "deploy_error": _state["error"]}
 
 
-@router.post("/deploy", dependencies=[Depends(require_role("operator")), Depends(require_active_base)])
+@router.post("/deploy", dependencies=[Depends(require_role("operator")), Depends(require_engine_cap("semantic"))])
 async def deploy(req: DeployIn, r=Depends(deps.get)) -> dict:
     if _state["running"]:
         raise HTTPException(409, "已有部署任务进行中")

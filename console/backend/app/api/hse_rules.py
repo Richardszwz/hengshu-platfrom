@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from .. import deps
 from ..security import current_user, require_role
-from ..license_guard import require_active_base, check_node_cap
+from ..license_guard import require_active_base, check_node_cap, require_engine_cap
 
 RULES_KEY = "hs:hse:rules"
 
@@ -65,31 +65,6 @@ async def create_rule(req: RuleIn, r=Depends(deps.get)) -> dict:
     return doc
 
 
-@router.put("/{rule_id}", dependencies=[Depends(require_role("operator")), Depends(require_active_base)])
-async def update_rule(rule_id: str, req: RuleIn, r=Depends(deps.get)) -> dict:
-    rules = await _load(r)
-    for i, doc in enumerate(rules):
-        if doc.get("id") == rule_id:
-            nd = req.model_dump()
-            nd["id"] = rule_id
-            nd["ts"] = doc.get("ts", int(time.time()))
-            rules[i] = nd
-            await _save(r, rules)
-            return nd
-    raise HTTPException(404, "规则不存在")
-
-
-@router.delete("/{rule_id}", dependencies=[Depends(require_role("operator")), Depends(require_active_base)])
-async def delete_rule(rule_id: str, r=Depends(deps.get)) -> dict:
-    rules = await _load(r)
-    n = len(rules)
-    rules = [d for d in rules if d.get("id") != rule_id]
-    if len(rules) == n:
-        raise HTTPException(404, "规则不存在")
-    await _save(r, rules)
-    return {"removed": rule_id}
-
-
 # ---------- 模型参数（cost 同优先级决胜；threshold 为 PRO 语义路由预留） ----------
 MODELCFG_KEY = "hs:hse:modelcfg"
 
@@ -138,7 +113,7 @@ class ConfigIn(BaseModel):
     alpha: float = 0.5
 
 
-@router.put("/config", dependencies=[Depends(require_role("operator")), Depends(require_active_base)])
+@router.put("/config", dependencies=[Depends(require_role("operator")), Depends(require_engine_cap("alpha"))])
 async def put_config(req: ConfigIn, r=Depends(deps.get)) -> dict:
     await r.hset(CONFIG_KEY, mapping={
         "embedding_url": req.embedding_url,
@@ -159,3 +134,29 @@ async def get_replay(limit: int = 100, r=Depends(deps.get)) -> dict:
         except json.JSONDecodeError:
             continue
     return {"replay": out}
+
+
+# ---------- 单规则写操作（参数化路径须最后注册，避免吃掉 /config 等字面量路由） ----------
+@router.put("/{rule_id}", dependencies=[Depends(require_role("operator")), Depends(require_active_base)])
+async def update_rule(rule_id: str, req: RuleIn, r=Depends(deps.get)) -> dict:
+    rules = await _load(r)
+    for i, doc in enumerate(rules):
+        if doc.get("id") == rule_id:
+            nd = req.model_dump()
+            nd["id"] = rule_id
+            nd["ts"] = doc.get("ts", int(time.time()))
+            rules[i] = nd
+            await _save(r, rules)
+            return nd
+    raise HTTPException(404, "规则不存在")
+
+
+@router.delete("/{rule_id}", dependencies=[Depends(require_role("operator")), Depends(require_active_base)])
+async def delete_rule(rule_id: str, r=Depends(deps.get)) -> dict:
+    rules = await _load(r)
+    n = len(rules)
+    rules = [d for d in rules if d.get("id") != rule_id]
+    if len(rules) == n:
+        raise HTTPException(404, "规则不存在")
+    await _save(r, rules)
+    return {"removed": rule_id}

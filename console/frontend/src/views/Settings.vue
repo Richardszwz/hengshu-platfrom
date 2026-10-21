@@ -45,6 +45,65 @@
       <p v-if="msg.lic" class="msg" :class="msg.licOk ? 'ok' : 'bad'">{{ msg.lic }}</p>
     </div>
 
+    <!-- 语义引擎（embedding）—— PRO/ENT 授权才可操作 -->
+    <div class="panel">
+      <div class="p-head">
+        <h3>语义引擎（embedding） <span class="eng-badge">HSE</span></h3>
+        <span class="sub">Ollama 框架 · 无则自动安装并拉取模型 · 接入后语义路由可用</span>
+      </div>
+      <div v-if="!enginePro" class="locked-tip">
+        🔒 需导入 <b>PRO / ENT</b> 引擎 License 后启用（上方「授权」区激活）
+      </div>
+      <template v-else>
+        <div class="row">
+          <span class="k" style="align-self:center">状态</span>
+          <span v-if="embedStatus.url" class="embed-state" :class="{ ok: embedStatus.ok }">
+            {{ embedStatus.ok ? '● 已接入' : '● 异常' }} <span class="mono">{{ embedStatus.url }}</span>
+            <template v-if="!embedStatus.ok && embedStatus.note">（{{ embedStatus.note }}）</template>
+          </span>
+          <span v-else class="embed-state">○ 未部署（语义规则停用中）</span>
+        </div>
+        <div class="row">
+          <span class="k" style="align-self:center">部署到</span>
+          <select v-model="deploy.target" class="inp sel">
+            <option value="local">本机（衡枢控制台所在机）</option>
+            <option v-for="n in nodeList" :key="n.id" :value="n.id">{{ n.id }}（{{ n.ip }}）</option>
+          </select>
+          <span class="k" style="align-self:center">API 端口</span>
+          <input v-model.number="deploy.port" class="inp" style="flex:0 0 90px" type="number" />
+          <span class="k" style="align-self:center">模型</span>
+          <input v-model.trim="deploy.model" class="inp" style="flex:0 0 130px" placeholder="bge-m3" />
+        </div>
+        <div class="row">
+          <span class="k" style="align-self:center">模型存放位置</span>
+          <input v-model.trim="deploy.models_dir" class="inp"
+                 placeholder="留空=Ollama 默认（~/.ollama/models）；自定义如 /data/ollama-models" />
+        </div>
+        <div class="row" v-if="deploy.target !== 'local'">
+          <span class="k" style="align-self:center">SSH 用户</span>
+          <input v-model.trim="deploy.ssh_user" class="inp" style="flex:0 0 120px" />
+          <span class="k" style="align-self:center">密码/私钥</span>
+          <input v-model="deploy.ssh_pass" class="inp" type="password"
+                 placeholder="本次部署用，不落库；私钥请粘 PEM 全文" />
+        </div>
+        <div class="row">
+          <button class="btn" :disabled="embedStatus.deploying" @click="doDeploy">
+            {{ embedStatus.deploying ? '部署中…（进度见事件流）' : '部署并接入' }}</button>
+          <span class="dim" style="align-self:center;font-size:11px">已有可用端点？直接填：</span>
+          <input v-model.trim="cfg.embedding_url" class="inp" placeholder="http://host:11434" />
+          <button class="btn ghost" @click="saveCfg">接入</button>
+        </div>
+        <div class="row">
+          <span class="k" style="align-self:center">α 激进度</span>
+          <input type="range" min="0" max="1" step="0.05" v-model.number="cfg.alpha" style="flex:1" />
+          <b class="mono" style="color:var(--cyan)">{{ cfg.alpha.toFixed(2) }}</b>
+          <button class="btn ghost" @click="saveCfg">保存 α</button>
+          <span class="dim" style="align-self:center;font-size:11px">越高语义路由越激进</span>
+        </div>
+        <p v-if="deployMsg || cfgMsg" class="msg" :class="embedStatus.ok ? 'ok' : ''">{{ deployMsg || cfgMsg }}</p>
+      </template>
+    </div>
+
     <!-- Webhook 通知 -->
     <div class="panel">
       <div class="p-head">
@@ -148,6 +207,75 @@ const busy = ref(false)
 const msg = reactive({ webhook: '', webhookOk: false, pwd: '', pwdOk: false, users: '', lic: '', licOk: false })
 const lic = ref<any>(null)
 const licText = ref('')
+const enginePro = computed(() => !!lic.value?.ok && lic.value?.edition && lic.value.edition !== 'STD')
+
+/* ---------- 语义引擎（embedding，PRO/ENT 门控） ---------- */
+const cfg = reactive({ embedding_url: '', embedding_model: 'bge-m3', alpha: 0.5 })
+const cfgMsg = ref('')
+const embedStatus = reactive({ url: '', model: 'bge-m3', ok: false, note: '', deploying: false, step: '' })
+const deploy = reactive({ target: 'local', port: 11434, model: 'bge-m3', models_dir: '', ssh_user: '', ssh_pass: '' })
+const deployMsg = ref('')
+const nodeList = ref<any[]>([])
+
+async function cfgLoad() {
+  try {
+    const d = await api.hseConfig()
+    Object.assign(cfg, d.config ?? {})
+  } catch { /* STD 未授权时 403/404，忽略 */ }
+}
+async function embedStatusLoad() {
+  try {
+    const d = await api.hseEmbedStatus()
+    Object.assign(embedStatus, d)
+  } catch { /* STD 403，保持未部署态 */ }
+}
+async function nodesLoad() {
+  try {
+    const d = await api.nodes()
+    nodeList.value = (d.nodes ?? [])
+      .filter((n: any) => n.status === 'online')
+      .map((n: any) => ({ id: n.node_id, ip: n.ssh_host }))
+  } catch { /* 忽略 */ }
+}
+async function saveCfg() {
+  cfgMsg.value = ''
+  try {
+    await api.hsePutConfig({ embedding_url: cfg.embedding_url,
+                             embedding_model: cfg.embedding_model, alpha: cfg.alpha })
+    cfgMsg.value = '已保存（引擎 5s 内热更）'
+    await embedStatusLoad()
+  } catch (e: any) {
+    cfgMsg.value = e?.response?.data?.detail || '保存失败'
+  }
+}
+async function doDeploy() {
+  deployMsg.value = ''
+  if (deploy.target !== 'local' && (!deploy.ssh_user || !deploy.ssh_pass)) {
+    deployMsg.value = '部署到节点需填 SSH 用户与密码/私钥（不落库）'
+    return
+  }
+  try {
+    const body: any = { target: deploy.target, port: deploy.port,
+                        model: deploy.model, models_dir: deploy.models_dir }
+    if (deploy.target !== 'local') {
+      const isPem = deploy.ssh_pass.includes('PRIVATE KEY')
+      body.ssh = { username: deploy.ssh_user,
+                   ...(isPem ? { private_key: deploy.ssh_pass } : { password: deploy.ssh_pass }) }
+    }
+    await api.hseEmbedDeploy(body)
+    deployMsg.value = '已受理，后台部署中（拉模型需数分钟，进度见事件流）'
+    const t = setInterval(async () => {
+      await embedStatusLoad()
+      if (!embedStatus.deploying) {
+        clearInterval(t)
+        deployMsg.value = embedStatus.ok ? '✓ 已接入 ' + embedStatus.url
+          : ('部署结束：' + (embedStatus.note || embedStatus.step))
+      }
+    }, 3000)
+  } catch (e: any) {
+    deployMsg.value = e?.response?.data?.detail || '部署请求失败'
+  }
+}
 function fmtDate(ts: number) {
   const d = new Date(ts * 1000)
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -164,6 +292,7 @@ async function activateLic() {
     msg.licOk = true
     licText.value = ''
     await loadLic()
+    if (enginePro.value) { cfgLoad(); embedStatusLoad(); nodesLoad() }
   } catch (e: any) {
     msg.lic = e?.response?.data?.detail || '激活失败'
     msg.licOk = false
@@ -283,7 +412,11 @@ function saveRefresh() {
   localStorage.setItem('hs_refresh_ms', String(refreshMs.value))
 }
 
-onMounted(() => { load(); loadUsers(); loadLic() })
+onMounted(async () => {
+  load(); loadUsers()
+  await loadLic()
+  if (enginePro.value) { cfgLoad(); embedStatusLoad(); nodesLoad() }
+})
 </script>
 
 <style scoped>
@@ -322,4 +455,9 @@ onMounted(() => { load(); loadUsers(); loadLic() })
 .mini-btn:disabled { opacity: .35; cursor: not-allowed; }
 .ok-t { color: var(--green); } .bad-t { color: var(--red); }
 .lic-inp { width: 100%; font-family: var(--font-mono, monospace); font-size: 11px; resize: vertical; }
+.eng-badge { font-size: 10px; border: 1px solid var(--cyan-dim); color: var(--cyan); padding: 0 5px; }
+.locked-tip { padding: 18px 14px; font-size: 12px; color: var(--txt-dim); }
+.locked-tip b { color: var(--yellow); }
+.embed-state { font-size: 12px; color: var(--txt-dim); }
+.embed-state.ok { color: var(--green); }
 </style>
