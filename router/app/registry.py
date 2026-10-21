@@ -21,6 +21,7 @@ class Instance:
     metrics: dict[str, Any] = field(default_factory=dict)
     served_model: str = ""         # 上游真实 served-model-name（转发时改写 body.model）
     tier: str = ""                 # 档位别名（HSE 路由）："" | fast | medium | strong
+    kind: str = "chat"             # 服务类型：chat|embedding|image|custom（image/custom 不进对话路由池）
 
     @property
     def inst_id(self) -> str:
@@ -58,13 +59,14 @@ class Registry:
                 status=h.get("status", "running"),
                 served_model=h.get("served_model", ""),
                 tier=h.get("tier", ""),
+                kind=h.get("kind", "chat"),
                 metrics={k: _num(v) for k, v in h.items()
                          if k.startswith("m_")},
             ))
-        return [i for i in out if i.alive]
+        return [i for i in out if i.alive and i.kind in ("chat", "embedding", "")]
 
-    async def all_instances(self) -> list[Instance]:
-        """全池活实例（auto 模式：不指定模型时按负载从中挑）。"""
+    async def all_instances(self, kinds: tuple[str, ...] = ("chat", "embedding", "")) -> list[Instance]:
+        """对话路由池活实例（auto 模式按负载挑）。image/custom 服务只纳管不进池。"""
         keys = await self.r.keys(f"{INST_PREFIX}*")
         out: list[Instance] = []
         for k in keys:
@@ -80,6 +82,30 @@ class Registry:
                 status=h.get("status", "running"),
                 served_model=h.get("served_model", ""),
                 tier=h.get("tier", ""),
+                kind=h.get("kind", "chat"),
+                metrics={kk: _num(vv) for kk, vv in h.items()
+                         if kk.startswith("m_")},
+            ))
+        return [i for i in out if i.alive and i.kind in kinds]
+
+    async def image_instances(self, model: str = "") -> list[Instance]:
+        """图像生成服务活实例（/v1/images/generations 路由池）。"""
+        keys = await self.r.keys(f"{INST_PREFIX}*")
+        out: list[Instance] = []
+        for k in keys:
+            h = await self.r.hgetall(k)
+            if not h or h.get("kind") != "image":
+                continue
+            if model and h.get("model") != model:
+                continue
+            iid = k.removeprefix(INST_PREFIX)
+            node_id, _, port = iid.partition(":")
+            out.append(Instance(
+                node_id=node_id, port=int(port),
+                model=h.get("model", ""), framework=h.get("framework", ""),
+                url=h.get("url", f"http://{node_id}:{port}"),
+                status=h.get("status", "running"),
+                kind="image",
                 metrics={kk: _num(vv) for kk, vv in h.items()
                          if kk.startswith("m_")},
             ))

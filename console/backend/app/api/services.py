@@ -27,6 +27,10 @@ class StartServiceReq(BaseModel):
     volumes: list[str] = []
     # 档位别名（HSE 路由）："" 不分档 | fast | medium | strong
     tier: str = ""
+    # 服务类型：chat（默认）| embedding | image（图像生成，走 /v1/images/generations）| custom（只纳管不进路由池）
+    kind: str = "chat"
+    # 自定义框架健康探测路径（空=类型默认）
+    health_path: str = ""
 
 
 @router.get("")
@@ -200,6 +204,9 @@ async def start_service(node_id: str, name: str, r=Depends(deps.get)) -> dict:
                 "workdir": spec.get("workdir", "/workspace"),
                 "env": _json.loads(spec.get("env_json", "{}")),
                 "volumes": _json.loads(spec.get("volumes_json", "[]")),
+                "tier": spec.get("tier", ""),
+                "kind": spec.get("kind", "chat"),
+                "health_path": spec.get("health_path", ""),
             }
             resp = await c.post(f"{addr}/services/start", json=payload)
         else:
@@ -226,6 +233,8 @@ class MultiStartReq(BaseModel):
     port: int = 8100
     env: dict[str, str] = {}
     tier: str = ""                                # 档位别名（HSE 路由）
+    kind: str = "chat"                            # 服务类型（同 StartServiceReq）
+    health_path: str = ""
 
 
 @router.post("/multi-start", dependencies=[Depends(require_role("operator")), Depends(require_active_base)])
@@ -316,7 +325,9 @@ async def multi_start(req: MultiStartReq, r=Depends(deps.get)) -> dict:
         spec = {"name": req.name, "image": req.image, "start_cmd": tp_cmd,
                 "port": req.port, "workdir": "/workspace", "env": svc_env,
                 "volumes": [f"{model_dist.models_root(await r.hgetall(f'hs:conn:{master}'))}:/models:ro"],
-                "tier": getattr(req, "tier", "")}
+                "tier": getattr(req, "tier", ""),
+                "kind": getattr(req, "kind", "chat"),
+                "health_path": getattr(req, "health_path", "")}
         try:
             async with httpx.AsyncClient(timeout=120.0, trust_env=False) as c:
                 resp = await c.post(f"{infos[master]['addr']}/services/start", json=spec)

@@ -224,14 +224,14 @@ async def run_nccl_test(*, rank: int, world: int, master_addr: str,
 async def list_models(host_dir: str) -> list[dict]:
     """列宿主机模型目录（一次性容器挂载只读 ls）。返回 [{name, size_mb, complete}]。
 
-    complete：含 config.json / params.json（HF/Mistral）或任一 .gguf/.safetensors
-    权重文件才算可用——半成品/空目录不参与"已有模型"判定（防 vllm 起空目录崩溃循环）。
+    complete：含 config.json / params.json（HF/Mistral）或 model_index.json（diffusers）
+    或任一 .gguf/.safetensors 权重文件才算可用——半成品/空目录不参与"已有模型"判定。
     """
     cmd = ("python3 -c \""
            "import os,json;d='/m';"
            "def ok(p):"
            " fs=[f for _,_,xs in os.walk(p) for x in xs for f in [x]];"
-           " return ('config.json' in fs) or ('params.json' in fs) or any("
+           " return ('config.json' in fs) or ('params.json' in fs) or ('model_index.json' in fs) or any("
            "f.endswith('.gguf') or f.endswith('.safetensors') for f in fs);"
            "print(json.dumps([{'name':n,'size_mb':round(sum("
            "os.path.getsize(os.path.join(r,f)) for r,_,fs in os.walk(os.path.join(d,n)) for f in fs"

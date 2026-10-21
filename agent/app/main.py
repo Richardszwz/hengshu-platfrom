@@ -162,7 +162,8 @@ async def _start_bg(req: StartRequest) -> None:
         spec = {"model": req.name,
                 "framework": "vllm" if "vllm" in req.start_cmd.lower() else "custom",
                 "port": req.port, "image": req.image, "start_cmd": req.start_cmd,
-                "workdir": req.workdir, "env": req.env, "tier": req.tier}
+                "workdir": req.workdir, "env": req.env, "tier": req.tier,
+                "kind": req.kind, "health_path": req.health_path}
         if inst:
             inst.update(spec)
         else:
@@ -435,6 +436,8 @@ async def heartbeat_loop() -> None:
                     "node": settings.node_id, "port": str(port),
                     "served_model": _served_model(inst),
                     "tier": inst.get("tier", ""),
+                    "kind": inst.get("kind", "chat"),
+                    "health_path": inst.get("health_path", ""),
                     **merged.as_metrics(),
                 })
                 pipe.expire(f"hs:inst:{iid}", ttl)

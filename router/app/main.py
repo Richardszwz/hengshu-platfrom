@@ -142,13 +142,48 @@ def _prefix_hash(messages: list[dict]) -> str:
 # ---------- OpenAI 兼容 ----------
 
 class ChatReq(BaseModel):
-    model: str = "auto"  # 缺省/“auto”/“*” → 全自动：规则命中走规则，否则全池按负载挑实例
+    model: str = "auto"  # 缺省/"auto"/"*" → 全自动：规则命中走规则，否则全池按负载挑实例
     messages: list[dict]
     session_id: str | None = None
     stream: bool = False
     temperature: float | None = None
     max_tokens: int | None = None
     type: str | None = None  # 规则路由：类型直达（hs:rules 映射），缺省按 model
+
+
+class ImageReq(BaseModel):
+    """OpenAI 图像生成标准（/v1/images/generations），直通 kind=image 服务实例。"""
+    model: str = ""            # 空=任一图像服务；指定则锁该模型实例
+    prompt: str
+    n: int = 1
+    size: str | None = None
+    response_format: str | None = None
+
+
+@app.post("/v1/images/generations")
+async def images(req: ImageReq, ctx: dict = Depends(auth)) -> Response:
+    ctx = await auth_tenant(ctx)
+    if ctx["qps_limit"] > 0 and not await _rate_ok(ctx["tid"], ctx["qps_limit"]):
+        raise HTTPException(429, f"tenant '{ctx['tenant']}' QPS limit exceeded ({ctx['qps_limit']}/s)")
+    pool = await registry.image_instances(req.model)
+    # 租户白名单同样约束图像服务
+    allowed = ctx.get("allowed_models") or set()
+    if allowed:
+        pool = [c for c in pool if c.model in allowed]
+    if not pool:
+        raise HTTPException(503, f"no live image instance"
+                                 + (f" for model '{req.model}'" if req.model else "（无图像生成服务在线）"))
+    inst = pick(pool, None)
+    payload = req.model_dump(exclude_none=True)
+    try:
+        async with httpx.AsyncClient(timeout=settings.upstream_timeout, trust_env=False) as c:
+            resp = await c.post(f"{inst.url}/v1/images/generations", json=payload)
+        body = resp.json()
+        if isinstance(body, dict):
+            body["instance"] = inst.inst_id
+        return JSONResponse(body, status_code=resp.status_code)
+    except (httpx.HTTPError, json.JSONDecodeError, OSError) as e:
+        raise HTTPException(502, f"image upstream {inst.inst_id}: {type(e).__name__} {e}")
 
 
 @app.get("/healthz")

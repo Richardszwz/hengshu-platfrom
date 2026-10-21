@@ -29,6 +29,10 @@ class StartRequest(BaseModel):
     volumes: list[str] = Field(default_factory=list)
     # 档位别名（HSE 路由用）："" 不分档 | fast | medium | strong
     tier: str = ""
+    # 服务类型：chat（OpenAI 对话，默认）| embedding | image（图像生成）| custom（自定义框架，只纳管不进路由池）
+    kind: str = "chat"
+    # 健康探测路径（自定义框架用）：空=按类型默认（vllm /health；custom /）
+    health_path: str = ""
 
 
 def _backend() -> str:
