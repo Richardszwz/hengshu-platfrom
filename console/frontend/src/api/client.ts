@@ -102,5 +102,10 @@ export const api = {
     axios.delete(`/api/hse/rules/${encodeURIComponent(id)}`).then(r => r.data),
   hseModelcfg: () => axios.get('/api/hse/rules/modelcfg').then(r => r.data),
   hsePutModelcfg: (model: string, payload: object) =>
-    axios.put(`/api/hse/rules/modelcfg/${encodeURIComponent(model)}`, payload).then(r => r.data)
+    axios.put(`/api/hse/rules/modelcfg/${encodeURIComponent(model)}`, payload).then(r => r.data),
+  hseConfig: () => axios.get('/api/hse/rules/config').then(r => r.data),
+  hsePutConfig: (payload: object) => axios.put('/api/hse/rules/config', payload).then(r => r.data),
+  hseReplay: (limit = 100) => axios.get('/api/hse/rules/replay', { params: { limit } }).then(r => r.data),
+  hseEmbedStatus: () => axios.get('/api/hse/embed/status').then(r => r.data),
+  hseEmbedDeploy: (payload: object) => axios.post('/api/hse/embed/deploy', payload).then(r => r.data)
 }

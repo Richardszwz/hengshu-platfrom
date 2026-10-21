@@ -116,3 +116,46 @@ async def put_modelcfg(model: str, req: ModelCfgIn, r=Depends(deps.get)) -> dict
     doc = {"cost": req.cost, "threshold": req.threshold}
     await r.hset(MODELCFG_KEY, model, json.dumps(doc))
     return {"model": model, **doc}
+
+
+# ---------- 引擎配置（embedding 端点 / α 激进度） ----------
+CONFIG_KEY = "hs:hse:config"
+
+
+@router.get("/config")
+async def get_config(r=Depends(deps.get)) -> dict:
+    h = await r.hgetall(CONFIG_KEY)
+    return {"config": {
+        "embedding_url": h.get("embedding_url", ""),
+        "embedding_model": h.get("embedding_model", "bge-m3"),
+        "alpha": float(h.get("alpha", 0.5) or 0.5),
+    }}
+
+
+class ConfigIn(BaseModel):
+    embedding_url: str = ""
+    embedding_model: str = "bge-m3"
+    alpha: float = 0.5
+
+
+@router.put("/config", dependencies=[Depends(require_role("operator")), Depends(require_active_base)])
+async def put_config(req: ConfigIn, r=Depends(deps.get)) -> dict:
+    await r.hset(CONFIG_KEY, mapping={
+        "embedding_url": req.embedding_url,
+        "embedding_model": req.embedding_model,
+        "alpha": str(max(0.0, min(1.0, req.alpha))),
+    })
+    return {"ok": True}
+
+
+# ---------- 决策回放（PRO route-replay） ----------
+@router.get("/replay")
+async def get_replay(limit: int = 100, r=Depends(deps.get)) -> dict:
+    raw = await r.lrange("hs:hse:replay", -min(limit, 500), -1)
+    out = []
+    for line in reversed(raw):
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return {"replay": out}

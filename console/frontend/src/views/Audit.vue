@@ -27,6 +27,28 @@
     </div>
 
     <div class="panel">
+      <!-- HSE 决策回放（PRO route-replay） -->
+      <div class="panel-title"><span>路由决策回放 <span class="hse-badge">HSE</span></span><button class="refresh" @click="loadReplay">刷新</button></div>
+      <div v-if="replay.length === 0" class="empty">暂无决策记录（PRO route-replay 授权后产生）</div>
+      <table v-else class="tbl">
+        <thead>
+          <tr><th>时间</th><th>提问</th><th>命中规则</th><th>→ 目标</th><th>置信度</th><th>信号</th><th>耗时</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="(e, i) in replay" :key="i" :class="{ 'shadow-row': e.shadow }">
+            <td class="mono">{{ fmt(e.ts) }}</td>
+            <td class="prompt-cell" :title="e.prompt_head">{{ e.prompt_head }}</td>
+            <td>{{ e.shadow ? '👻 ' : '' }}{{ e.rule_name || '—（未命中）' }}</td>
+            <td class="mono cyan">{{ e.target || '默认池' }}</td>
+            <td class="mono">{{ e.confidence ?? '—' }}</td>
+            <td class="dim" style="font-size:11px">{{ (e.signals || []).join(', ') }}</td>
+            <td class="mono dim">{{ e.latency_ms }}ms</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="panel">
       <div class="panel-title"><span>终端录屏</span><button class="refresh" @click="loadRecs">刷新</button></div>
       <div v-if="recs.length === 0" class="empty">暂无录屏</div>
       <table v-else class="tbl">
@@ -52,6 +74,7 @@ import { api } from '../api/client'
 
 const events = ref<any[]>([])
 const recs = ref<any[]>([])
+const replay = ref<any[]>([])
 const filter = ref('全部')
 const filters = ['全部', 'AUDIT', 'WARN', 'ERR', 'OK']
 
@@ -75,6 +98,12 @@ async function loadRecs() {
   } catch { /* 同上 */ }
 }
 
+async function loadReplay() {
+  try {
+    replay.value = (await api.hseReplay(100)).replay ?? []
+  } catch { /* 同上 */ }
+}
+
 // 下载需带 Authorization 头，裸 <a href> 会 401 —— fetch 取 blob 后本地下载
 async function dl(r: any) {
   try {
@@ -92,7 +121,7 @@ async function dl(r: any) {
     alert('下载失败：' + (e?.message || e))
   }
 }
-onMounted(() => { load(); loadRecs() })
+onMounted(() => { load(); loadRecs(); loadReplay() })
 </script>
 
 <style scoped>
@@ -105,6 +134,10 @@ onMounted(() => { load(); loadRecs() })
 .filter-btn { background: transparent; border: 1px solid var(--border); color: inherit; border-radius: 4px; padding: 2px 10px; font-size: 12px; cursor: pointer; }
 .filter-btn.active { border-color: var(--accent, #37b6ff); color: var(--accent, #37b6ff); }
 .refresh { margin-left: auto; background: transparent; border: 1px solid var(--border); color: inherit; border-radius: 4px; padding: 2px 12px; font-size: 12px; cursor: pointer; }
+.hse-badge { font-size: 10px; border: 1px solid var(--accent, #37b6ff); color: var(--accent, #37b6ff); padding: 0 5px; margin-left: 4px; }
+.prompt-cell { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shadow-row { opacity: .65; font-style: italic; }
+.mono.cyan { color: var(--accent, #37b6ff); }
 .empty { padding: 24px; text-align: center; color: var(--muted-foreground, #8b98b8); font-size: 12px; }
 .event-list { max-height: 420px; overflow-y: auto; font-size: 12px; }
 .event-row { display: flex; gap: 12px; padding: 6px 16px; border-bottom: 1px solid var(--border); }

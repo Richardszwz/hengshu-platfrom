@@ -66,6 +66,7 @@ SIGNAL_CAPS = {
     "keywords": "keyword", "keyword_scope": "keyword",
     "ctx_min": "context", "ctx_max": "context",
     "has_code_block": "structure", "lang": "structure",
+    "semantic": "semantic",
 }
 
 EVALUATORS = {
