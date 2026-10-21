@@ -12,6 +12,7 @@ from .. import deps, hooks
 from ..crypto import decrypt, encrypt
 from ..keys import CRED_PREFIX, INST_PREFIX, NODE_PREFIX
 from ..security import current_user, require_role
+from ..license_guard import require_active_base, check_node_cap
 
 router = APIRouter(prefix="/api/nodes", tags=["nodes"], dependencies=[Depends(current_user)])
 
@@ -84,7 +85,7 @@ class ConnUpdateReq(BaseModel):
     private_key: str | None = None
 
 
-@router.put("/{node_id}/conn", dependencies=[Depends(require_role("operator"))])
+@router.put("/{node_id}/conn", dependencies=[Depends(require_role("operator")), Depends(require_active_base)])
 async def update_conn(node_id: str, req: ConnUpdateReq, r=Depends(deps.get)) -> dict:
     """更新已登记节点的 SSH 连接信息（IP/端口/用户）与凭证（可选）。"""
     exists = await r.exists(f"hs:conn:{node_id}") or await r.exists(f"{NODE_PREFIX}{node_id}")
@@ -99,8 +100,9 @@ async def update_conn(node_id: str, req: ConnUpdateReq, r=Depends(deps.get)) -> 
     return {"updated": node_id, "host": req.hostname, "credential_updated": cred_updated}
 
 
-@router.post("", dependencies=[Depends(require_role("operator"))])
+@router.post("", dependencies=[Depends(require_role("operator")), Depends(require_active_base)])
 async def add_node(req: NodeAddReq, r=Depends(deps.get)) -> dict:
+    await check_node_cap(r)
     if not req.password and not req.private_key:
         raise HTTPException(400, "password or private_key required")
     blob = encrypt(req.private_key or req.password or "")
@@ -113,7 +115,7 @@ async def add_node(req: NodeAddReq, r=Depends(deps.get)) -> dict:
             "next": "POST /api/nodes/{node_id}/install 推送安装 Agent"}
 
 
-@router.post("/{node_id}/install", dependencies=[Depends(require_role("operator"))])
+@router.post("/{node_id}/install", dependencies=[Depends(require_role("operator")), Depends(require_active_base)])
 async def install_node(node_id: str, req: NodeAddReq, r=Depends(deps.get)) -> dict:
     """存凭证 → SSH 推送安装 Agent 容器 → 心跳自动上线。"""
     from ..config import settings
@@ -198,7 +200,7 @@ async def stop_agent(node_id: str, r=Depends(deps.get)) -> dict:
     return {"node_id": node_id, **out}
 
 
-@router.delete("/{node_id}", dependencies=[Depends(require_role("operator"))])
+@router.delete("/{node_id}", dependencies=[Depends(require_role("operator")), Depends(require_active_base)])
 async def remove_node(node_id: str, r=Depends(deps.get)) -> dict:
     """删除节点：在线 → 写墓碑（Agent 下一拍心跳见到即自杀并删容器）；离线 → 直接清登记。"""
     h = await r.hgetall(f"{NODE_PREFIX}{node_id}")

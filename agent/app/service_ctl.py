@@ -27,6 +27,8 @@ class StartRequest(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     # 卷挂载：["宿主机路径:容器路径[:ro]"]，模型权重必须靠它进容器
     volumes: list[str] = Field(default_factory=list)
+    # 档位别名（HSE 路由用）："" 不分档 | fast | medium | strong
+    tier: str = ""
 
 
 def _backend() -> str:

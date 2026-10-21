@@ -99,5 +99,8 @@ export const api = {
   hseUpdateRule: (id: string, payload: object) =>
     axios.put(`/api/hse/rules/${encodeURIComponent(id)}`, payload).then(r => r.data),
   hseDeleteRule: (id: string) =>
-    axios.delete(`/api/hse/rules/${encodeURIComponent(id)}`).then(r => r.data)
+    axios.delete(`/api/hse/rules/${encodeURIComponent(id)}`).then(r => r.data),
+  hseModelcfg: () => axios.get('/api/hse/rules/modelcfg').then(r => r.data),
+  hsePutModelcfg: (model: string, payload: object) =>
+    axios.put(`/api/hse/rules/modelcfg/${encodeURIComponent(model)}`, payload).then(r => r.data)
 }

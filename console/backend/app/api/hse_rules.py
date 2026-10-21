@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from .. import deps
 from ..security import current_user, require_role
+from ..license_guard import require_active_base, check_node_cap
 
 RULES_KEY = "hs:hse:rules"
 
@@ -53,7 +54,7 @@ class RuleIn(BaseModel):
     action: dict = {}
 
 
-@router.post("", dependencies=[Depends(require_role("operator"))])
+@router.post("", dependencies=[Depends(require_role("operator")), Depends(require_active_base)])
 async def create_rule(req: RuleIn, r=Depends(deps.get)) -> dict:
     doc = req.model_dump()
     doc["id"] = uuid.uuid4().hex[:8]
@@ -64,7 +65,7 @@ async def create_rule(req: RuleIn, r=Depends(deps.get)) -> dict:
     return doc
 
 
-@router.put("/{rule_id}", dependencies=[Depends(require_role("operator"))])
+@router.put("/{rule_id}", dependencies=[Depends(require_role("operator")), Depends(require_active_base)])
 async def update_rule(rule_id: str, req: RuleIn, r=Depends(deps.get)) -> dict:
     rules = await _load(r)
     for i, doc in enumerate(rules):
@@ -78,7 +79,7 @@ async def update_rule(rule_id: str, req: RuleIn, r=Depends(deps.get)) -> dict:
     raise HTTPException(404, "规则不存在")
 
 
-@router.delete("/{rule_id}", dependencies=[Depends(require_role("operator"))])
+@router.delete("/{rule_id}", dependencies=[Depends(require_role("operator")), Depends(require_active_base)])
 async def delete_rule(rule_id: str, r=Depends(deps.get)) -> dict:
     rules = await _load(r)
     n = len(rules)
@@ -87,3 +88,31 @@ async def delete_rule(rule_id: str, r=Depends(deps.get)) -> dict:
         raise HTTPException(404, "规则不存在")
     await _save(r, rules)
     return {"removed": rule_id}
+
+
+# ---------- 模型参数（cost 同优先级决胜；threshold 为 PRO 语义路由预留） ----------
+MODELCFG_KEY = "hs:hse:modelcfg"
+
+
+@router.get("/modelcfg")
+async def get_modelcfg(r=Depends(deps.get)) -> dict:
+    raw = await r.hgetall(MODELCFG_KEY)
+    out = {}
+    for m, c in raw.items():
+        try:
+            out[m] = json.loads(c)
+        except json.JSONDecodeError:
+            continue
+    return {"models": out}
+
+
+class ModelCfgIn(BaseModel):
+    cost: float = 0.0
+    threshold: float = 0.0
+
+
+@router.put("/modelcfg/{model}", dependencies=[Depends(require_role("operator")), Depends(require_active_base)])
+async def put_modelcfg(model: str, req: ModelCfgIn, r=Depends(deps.get)) -> dict:
+    doc = {"cost": req.cost, "threshold": req.threshold}
+    await r.hset(MODELCFG_KEY, model, json.dumps(doc))
+    return {"model": model, **doc}

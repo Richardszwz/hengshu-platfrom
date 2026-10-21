@@ -98,6 +98,17 @@
           <tr v-if="!hseRules.length"><td colspan="6" class="empty">暂无智能规则 — 未指定模型的请求全部走集群负载均衡</td></tr>
         </tbody>
       </table>
+      <!-- 模型参数：同优先级命中时成本小者优先（threshold 为 PRO 语义路由预留） -->
+      <div class="modelcfg" v-if="onlineModels.length">
+        <p class="mc-title">模型参数<span class="dim">（同优先级命中 → 成本小者优先；置信度阈值为 PRO 语义路由预留）</span></p>
+        <div class="mc-row" v-for="m in onlineModels" :key="m">
+          <span class="mono mc-name">{{ m }}</span>
+          <label>成本权重 <input class="inp mc-inp" type="number" step="0.1" min="0"
+            :value="modelcfg[m]?.cost ?? 0" @change="e => setModelcfg(m, 'cost', e)" /></label>
+          <label class="dim">置信度阈值 <input class="inp mc-inp" type="number" step="0.05" min="0" max="1"
+            :value="modelcfg[m]?.threshold ?? 0" disabled title="PRO 语义路由启用" /></label>
+        </div>
+      </div>
     </div>
   </AppLayout>
 </template>
@@ -141,6 +152,29 @@ async function hseLoad() {
   } catch { /* 引擎规则接口失败不阻塞页面 */ }
 }
 
+/* ---------- 模型参数（cost/threshold） ---------- */
+const modelcfg = ref<Record<string, { cost: number; threshold: number }>>({})
+
+async function modelcfgLoad() {
+  try {
+    const d = await api.hseModelcfg()
+    const saved = d.models ?? {}
+    const out: Record<string, { cost: number; threshold: number }> = {}
+    for (const m of onlineModels.value) {
+      out[m] = { cost: saved[m]?.cost ?? 0, threshold: saved[m]?.threshold ?? 0 }
+    }
+    modelcfg.value = out
+  } catch { /* 忽略 */ }
+}
+
+async function setModelcfg(m: string, key: 'cost' | 'threshold', e: Event) {
+  const v = Number((e.target as HTMLInputElement).value) || 0
+  const cur = modelcfg.value[m] ?? { cost: 0, threshold: 0 }
+  cur[key] = v
+  modelcfg.value = { ...modelcfg.value, [m]: cur }
+  await api.hsePutModelcfg(m, { cost: cur.cost ?? 0, threshold: cur.threshold ?? 0 })
+}
+
 async function hseAdd() {
   hseError.value = ''
   const when: any = {}
@@ -180,6 +214,7 @@ async function load() {
   try {
     const svcs = await api.services()
     onlineModels.value = [...new Set((svcs.services ?? []).map((s: any) => s.model))].sort()
+    await modelcfgLoad()
   } catch { /* 服务列表失败不阻塞规则页 */ }
 }
 async function add() {
@@ -238,4 +273,9 @@ onMounted(() => { load(); hseLoad() })
 .hf-row .inp.sm { flex: 0 0 170px; }
 .hf-row .inp.sm2 { flex: 0 0 120px; }
 .chk { font-size: 11px; color: var(--txt-dim); display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.modelcfg { border-top: 1px dashed var(--line); padding: 10px 14px; }
+.mc-title { font-size: 12px; margin: 0 0 8px; }
+.mc-row { display: flex; align-items: center; gap: 16px; margin-bottom: 6px; font-size: 11px; color: var(--txt-dim); }
+.mc-name { color: var(--cyan); min-width: 200px; }
+.mc-inp { width: 70px; margin-left: 6px; }
 </style>

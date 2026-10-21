@@ -88,6 +88,9 @@ async def summary(r=Depends(deps.get)) -> dict:
                                if isinstance(ts, (int, float)) else str(ts),
                        "text": d.get("msg") or d.get("text", "")})
 
+    from ..license_guard import current_license_state
+    _lic = await current_license_state(r)
+
     return {
         "nodes_total": len(agent_addrs),  # 墓碑过滤后的真实节点数
         "nodes_online": nodes_online,
@@ -102,6 +105,9 @@ async def summary(r=Depends(deps.get)) -> dict:
         "agent_addrs": agent_addrs,
         "node_gpus": node_gpus,
         "events": events,
+        "license": {"ok": _lic.ok, "reason": _lic.reason, "customer": _lic.customer,
+                    "base_mode": _lic.base_mode, "base_expires": _lic.base_expires,
+                    "base_in_grace": _lic.base_in_grace, "edition": _lic.edition},
     }
 
 

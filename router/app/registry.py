@@ -20,6 +20,7 @@ class Instance:
     status: str = "running"        # running | starting | stopped
     metrics: dict[str, Any] = field(default_factory=dict)
     served_model: str = ""         # 上游真实 served-model-name（转发时改写 body.model）
+    tier: str = ""                 # 档位别名（HSE 路由）："" | fast | medium | strong
 
     @property
     def inst_id(self) -> str:
@@ -56,6 +57,7 @@ class Registry:
                 url=h.get("url", f"http://{node_id}:{port}"),
                 status=h.get("status", "running"),
                 served_model=h.get("served_model", ""),
+                tier=h.get("tier", ""),
                 metrics={k: _num(v) for k, v in h.items()
                          if k.startswith("m_")},
             ))
@@ -77,10 +79,15 @@ class Registry:
                 url=h.get("url", f"http://{node_id}:{port}"),
                 status=h.get("status", "running"),
                 served_model=h.get("served_model", ""),
+                tier=h.get("tier", ""),
                 metrics={kk: _num(vv) for kk, vv in h.items()
                          if kk.startswith("m_")},
             ))
         return [i for i in out if i.alive]
+
+    async def tier_instances(self, tier: str) -> list[Instance]:
+        """某档位的全部活实例（HSE tier 决策用；未分档实例不参与档位路由）。"""
+        return [i for i in await self.all_instances() if i.tier == tier]
 
     async def all_models(self) -> list[str]:
         keys = await self.r.keys(f"{MODEL_PREFIX}*")

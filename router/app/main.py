@@ -154,13 +154,13 @@ def _msg_text(content) -> str:
     return ""
 
 
-async def hse_decide(messages: list[dict]) -> str | None:
-    """调 HSE 引擎取路由决策；引擎未配置/失联/未命中 → None（降级默认池）。
+async def hse_decide(messages: list[dict]) -> tuple[str | None, str | None]:
+    """调 HSE 引擎取路由决策；引擎未配置/失联/未命中 → (None, None)（降级默认池）。
 
-    决策的模型若无在线实例，chat 层负责回退全池。
+    返回 (model, tier)：model 优先；tier 走档位池，档位无实例回退全池。
     """
     if not settings.hse_url:
-        return None
+        return None, None
     last_user = next((m for m in reversed(messages) if m.get("role") == "user"), None)
     prompt = _msg_text(last_user.get("content")) if last_user else ""
     all_text = "\n".join(_msg_text(m.get("content")) for m in messages)
@@ -170,10 +170,11 @@ async def hse_decide(messages: list[dict]) -> str | None:
         async with httpx.AsyncClient(timeout=settings.hse_timeout, trust_env=False) as c:
             d = (await c.post(f"{settings.hse_url}/v1/route-decision", json=body)).json()
         if d.get("degraded"):
-            return None
-        return (d.get("decision") or {}).get("model")
+            return None, None
+        dec = d.get("decision") or {}
+        return dec.get("model"), dec.get("tier")
     except Exception:  # noqa: BLE001
-        return None  # 引擎失联/超时 → 默认池（fail-open）
+        return None, None  # 引擎失联/超时 → 默认池（fail-open）
 
 
 @app.post("/v1/chat/completions")
@@ -194,13 +195,20 @@ async def chat(req: ChatReq, x_session_id: str | None = Header(default=None),
     rule_type = x_type or req.type
     model = await resolve_model(req.model, rule_type)
     # HSE 智能路由：接口类型未命中且未指定模型时，问引擎（引擎失联自动降级）
-    decided = None
+    decided: str | None = None
+    decided_tier: str | None = None
     if model in ("", "auto", "*"):
-        decided = await hse_decide(req.messages)
+        decided, decided_tier = await hse_decide(req.messages)
         if decided:
             model = decided
     if model in ("", "auto", "*"):
-        candidates = await registry.all_instances()   # 不指定模型：全池按负载挑
+        if decided_tier:
+            candidates = await registry.tier_instances(decided_tier)
+            if not candidates:
+                # 档位无在线实例 → 回退全池（引擎决策是建议不是命令）
+                candidates = await registry.all_instances()
+        else:
+            candidates = await registry.all_instances()   # 不指定模型：全池按负载挑
         if not candidates:
             raise HTTPException(503, "no live instance in cluster"
                                      + (f" (type '{rule_type}' 无规则映射)" if rule_type else ""))

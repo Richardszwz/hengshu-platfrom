@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import sys
 
 import fakeredis.aioredis
 import pytest
@@ -15,6 +16,8 @@ from app.security import current_user
 @pytest.fixture()
 def client():
     import asyncio
+    from pathlib import Path
+
     from app.security import hash_password, issue_token
 
     fake = fakeredis.aioredis.FakeRedis(decode_responses=True)
@@ -23,6 +26,16 @@ def client():
     asyncio.run(fake.hset("hs:user:admin", mapping={
         "password_hash": hash_password("x12345"), "role": "admin",
         "enabled": "1", "created": "1"}))
+    # 写操作挂基本 License 守卫：种一份开发私钥签发的有效 license
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+    from libs import hslicense as L
+    sk = (Path(__file__).resolve().parents[3] /
+          "scripts/dev_keys/license_private.pem").read_bytes()
+    lic = L.sign_payload({
+        "customer": "test", "fingerprint": L.cluster_fingerprint(),
+        "base": {"mode": "perpetual", "max_nodes": 0, "expires": 0, "version_cap": "1.x"},
+        "engine": {"edition": "ENT", "caps": L.ALL_CAPS, "expires": 0}}, sk)
+    asyncio.run(fake.set("hs:license:file", json.dumps(lic)))
     with TestClient(app) as c:
         c.headers["Authorization"] = "Bearer " + issue_token("admin")["access_token"]
         yield c

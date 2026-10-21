@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from .. import deps
 from ..keys import INST_PREFIX, MODEL_PREFIX, NODE_PREFIX
 from ..security import current_user, require_role
+from ..license_guard import require_active_base, check_node_cap
 
 router = APIRouter(prefix="/api/services", tags=["services"],
                    dependencies=[Depends(current_user)])
@@ -24,6 +25,8 @@ class StartServiceReq(BaseModel):
     env: dict[str, str] = {}
     # 卷挂载：["宿主机路径:容器路径[:ro]"]——模型权重靠它进容器
     volumes: list[str] = []
+    # 档位别名（HSE 路由）："" 不分档 | fast | medium | strong
+    tier: str = ""
 
 
 @router.get("")
@@ -81,7 +84,7 @@ async def list_specs(node_id: str, r=Depends(deps.get)) -> dict:
     return {"specs": sorted(out, key=lambda x: x["name"])}
 
 
-@router.post("/{node_id}/start", dependencies=[Depends(require_role("operator"))])
+@router.post("/{node_id}/start", dependencies=[Depends(require_role("operator")), Depends(require_active_base)])
 async def launch_service(node_id: str, req: StartServiceReq, r=Depends(deps.get)) -> dict:
     """启动新服务：先存 spec，后台 ensure 模型（缺则他机拷贝/在线拉取）→ 就绪后下发 Agent。"""
     import json as _json
@@ -143,7 +146,7 @@ async def stop_service(node_id: str, name: str, r=Depends(deps.get)) -> dict:
     return resp.json()
 
 
-@router.delete("/{node_id}/{name}", dependencies=[Depends(require_role("operator"))])
+@router.delete("/{node_id}/{name}", dependencies=[Depends(require_role("operator")), Depends(require_active_base)])
 async def delete_service(node_id: str, name: str, r=Depends(deps.get)) -> dict:
     """删除服务：尽力停容器 → 清实例登记/模型集合。spec 保留作启动模板（重建时对话框预填用）。"""
     stopped = None
@@ -222,9 +225,10 @@ class MultiStartReq(BaseModel):
     image: str = "docker.1ms.run/vllm/vllm-openai:latest"
     port: int = 8100
     env: dict[str, str] = {}
+    tier: str = ""                                # 档位别名（HSE 路由）
 
 
-@router.post("/multi-start", dependencies=[Depends(require_role("operator"))])
+@router.post("/multi-start", dependencies=[Depends(require_role("operator")), Depends(require_active_base)])
 async def multi_start(req: MultiStartReq, r=Depends(deps.get)) -> dict:
     """受理制：模型分发 → Ray head/worker → 集齐 → master 起 vllm TP=N → 注册实例。"""
     import asyncio as _aio
@@ -311,7 +315,8 @@ async def multi_start(req: MultiStartReq, r=Depends(deps.get)) -> dict:
                         "NCCL_SOCKET_IFNAME": infos[master]["nic"]})
         spec = {"name": req.name, "image": req.image, "start_cmd": tp_cmd,
                 "port": req.port, "workdir": "/workspace", "env": svc_env,
-                "volumes": [f"{model_dist.models_root(await r.hgetall(f'hs:conn:{master}'))}:/models:ro"]}
+                "volumes": [f"{model_dist.models_root(await r.hgetall(f'hs:conn:{master}'))}:/models:ro"],
+                "tier": getattr(req, "tier", "")}
         try:
             async with httpx.AsyncClient(timeout=120.0, trust_env=False) as c:
                 resp = await c.post(f"{infos[master]['addr']}/services/start", json=spec)

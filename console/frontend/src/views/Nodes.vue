@@ -281,6 +281,12 @@
         <label>启动命令 <input v-model.trim="launch.start_cmd" class="inp mono-inp"
           placeholder="vllm serve /models/qwen --port {port} --served-model-name Qwen3-8B" /></label>
         <label>服务端口 <input v-model.number="launch.port" class="inp" type="number" placeholder="8100" /></label>
+        <label>路由档位（HSE）<select v-model="launch.tier" class="inp">
+          <option value="">不分档</option>
+          <option value="fast">fast（快/小模型）</option>
+          <option value="medium">medium</option>
+          <option value="strong">strong（强/大模型）</option>
+        </select></label>
         <label>环境变量（每行 KEY=VALUE）<textarea v-model="launch.envText" class="inp env-inp" rows="3"
           placeholder="HF_ENDPOINT=https://hf-mirror.com"></textarea></label>
         <label>卷挂载（每行 宿主机路径:容器路径[:ro]，模型权重必配）<textarea v-model="launch.volText" class="inp env-inp" rows="2"
@@ -503,7 +509,7 @@ async function reinstall(n: any) {
 const launchOpen = ref(false)
 const launchBusy = ref(false)
 const launchError = ref('')
-const launch = reactive({ node: '', name: '', image: 'docker.1ms.run/vllm/vllm-openai:latest', start_cmd: '', port: 8100, envText: '', volText: '' })
+const launch = reactive({ node: '', name: '', image: 'docker.1ms.run/vllm/vllm-openai:latest', start_cmd: '', port: 8100, tier: '', envText: '', volText: '' })
 const launchNodes = ref<Set<string>>(new Set())      // 勾选的多机部署节点
 const launchNics = ref<Record<string, string>>({})   // 节点 → NCCL/TP 链路网卡名
 const launchResults = ref<string[]>([])              // 启动下发结果行
@@ -789,7 +795,7 @@ async function submitLaunch() {
         // 首个勾选为 master（= 选中的 API IP 所在节点）
         nodes: [masterNode()].concat(otherSelected()),
         nics: linkNics.value,
-        model_dir: md[1], image: launch.image, port: launch.port, env })
+        model_dir: md[1], image: launch.image, port: launch.port, env, tier: launch.tier })
       launchResults.value = [`✓ 已受理 TP×${d.tp}（${d.note}）`]
       launchOpen.value = false
     } catch (e: any) {
@@ -815,7 +821,7 @@ async function submitLaunch() {
       const d = await api.launchService(nid, {
         name: launch.name, image: launch.image,
         start_cmd: launch.start_cmd.replaceAll('{port}', String(launch.port)),
-        port: launch.port, workdir: '/workspace', env, volumes: vols
+        port: launch.port, workdir: '/workspace', env, volumes: vols, tier: launch.tier
       })
       results.push(`✓ ${nid} 已受理（${d.note || '模型检查/分发→自动启动'}）`)
     } catch (e: any) {

@@ -109,3 +109,22 @@ class TestEngine:
         ])
         out = _run(e.decide(ctx(), ["context"]))
         assert out["decision"]["tier"] == "strong" and out["decision"]["model"] is None
+
+    def test_cost_tiebreak_same_priority(self):
+        async def make():
+            import fakeredis.aioredis as fr
+            r = fr.FakeRedis(decode_responses=True)
+            for doc in [
+                {"id": "a", "name": "去贵模型", "enabled": True, "priority": 100,
+                 "when": {"keywords": ["python"]}, "action": {"model": "M-expensive"}},
+                {"id": "b", "name": "去便宜模型", "enabled": True, "priority": 100,
+                 "when": {"keywords": ["python"]}, "action": {"model": "M-cheap"}},
+            ]:
+                await r.rpush("hs:hse:rules", json.dumps(doc, ensure_ascii=False))
+            await r.hset("hs:hse:modelcfg", "M-expensive", json.dumps({"cost": 1.0}))
+            await r.hset("hs:hse:modelcfg", "M-cheap", json.dumps({"cost": 0.2}))
+            return Engine(r)
+        e = _run(make())
+        out = _run(e.decide(ctx(), ["keyword"]))
+        # 同优先级同命中 → 成本小者胜
+        assert out["decision"]["model"] == "M-cheap" and out["cost"] == 0.2

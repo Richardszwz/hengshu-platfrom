@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends
 
 from .. import deps
 from ..security import current_user, require_role
+from ..license_guard import require_active_base, check_node_cap
 
 router = APIRouter(prefix="/api/rules", tags=["rules"],
                    dependencies=[Depends(current_user)])
@@ -18,13 +19,13 @@ async def list_rules(r=Depends(deps.get)) -> dict:
     return {"rules": [{"type": k, "model": v} for k, v in rows.items()]}
 
 
-@router.put("/{rule_type}", dependencies=[Depends(require_role("operator"))])
+@router.put("/{rule_type}", dependencies=[Depends(require_role("operator")), Depends(require_active_base)])
 async def upsert_rule(rule_type: str, model: str, r=Depends(deps.get)) -> dict:
     await r.hset(RULES_KEY, rule_type, model)
     return {"type": rule_type, "model": model}
 
 
-@router.delete("/{rule_type}", dependencies=[Depends(require_role("operator"))])
+@router.delete("/{rule_type}", dependencies=[Depends(require_role("operator")), Depends(require_active_base)])
 async def delete_rule(rule_type: str, r=Depends(deps.get)) -> dict:
     await r.hdel(RULES_KEY, rule_type)
     return {"removed": rule_type}

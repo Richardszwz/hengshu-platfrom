@@ -37,7 +37,14 @@ class Engine:
     async def decide(self, ctx: ReqCtx, caps: list[str]) -> dict[str, Any]:
         t0 = time.perf_counter()
         rules = await self.rules()
+        # 模型成本配置（同优先级命中时成本小者优先；model_thresholds 为 PRO 语义预留）
+        try:
+            raw_cfg = await self.r.hgetall("hs:hse:modelcfg")
+            costs = {m: float(json.loads(c).get("cost", 0)) for m, c in raw_cfg.items()}
+        except Exception:  # noqa: BLE001
+            costs = {}
         skipped: list[str] = []
+        best: dict | None = None
         for rule in rules:
             if not rule.get("enabled", True):
                 continue
@@ -58,18 +65,31 @@ class Engine:
                 if note:
                     fired.append(note)
                     notes.append(note)
-            if ok:
-                action = rule.get("action") or {}
-                return {
-                    "decision": {"model": action.get("model") or None,
-                                 "tier": action.get("tier") or None},
-                    "confidence": 1.0,
-                    "matched_rule": rule.get("id"),
-                    "rule_name": rule.get("name", ""),
-                    "signals": fired,
-                    "skipped_unlicensed": skipped,
-                    "latency_ms": round((time.perf_counter() - t0) * 1000, 2),
-                }
+            if not ok:
+                continue
+            action = rule.get("action") or {}
+            prio = int(rule.get("priority", 0))
+            target = action.get("model") or action.get("tier") or ""
+            cost = costs.get(str(target), 0.0)
+            # 先比优先级；同优先级比成本（小者优先）
+            key = (prio, -cost)
+            if best is None or key > best["key"]:
+                best = {"key": key, "rule": rule, "action": action,
+                        "signals": fired, "cost": cost}
+        latency = round((time.perf_counter() - t0) * 1000, 2)
+        if best is not None:
+            action = best["action"]
+            return {
+                "decision": {"model": action.get("model") or None,
+                             "tier": action.get("tier") or None},
+                "confidence": 1.0,
+                "matched_rule": best["rule"].get("id"),
+                "rule_name": best["rule"].get("name", ""),
+                "signals": best["signals"],
+                "cost": best["cost"],
+                "skipped_unlicensed": skipped,
+                "latency_ms": latency,
+            }
         return {
             "decision": {"model": None, "tier": None},
             "confidence": 0.0,
@@ -77,5 +97,5 @@ class Engine:
             "rule_name": "",
             "signals": [],
             "skipped_unlicensed": skipped,
-            "latency_ms": round((time.perf_counter() - t0) * 1000, 2),
+            "latency_ms": latency,
         }

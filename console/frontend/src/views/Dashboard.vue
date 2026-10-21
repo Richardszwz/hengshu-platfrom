@@ -13,6 +13,17 @@
     </template>
 
     <div class="dash-wrap">
+    <!-- 授权状态横幅（异常时才出现） -->
+    <div v-if="summary && summary.license && (!summary.license.ok || summary.license.base_in_grace)"
+         class="lic-banner" :class="{ grace: summary.license.base_in_grace }">
+      <template v-if="!summary.license.ok">
+        ⚠ 软件基本 License {{ summary.license.reason === 'missing' ? '未激活' : '异常（' + summary.license.reason + '）' }}
+        ——管理面只读中，流量面不受影响。请到「系统设置 → 授权」激活。
+      </template>
+      <template v-else>
+        ⚠ 基本 License 已过有效期，当前处于 30 天宽限期，请尽快续费（系统设置 → 授权）。
+      </template>
+    </div>
     <div class="dash-main">
       <!-- KPI 行 -->
       <div class="kpis" v-if="summary">
@@ -665,4 +676,10 @@ onUnmounted(() => {
 .d-kpis .num { font-family: var(--font-num); font-size: 22px; }
 .d-sec { margin-bottom: 14px; }
 .d-sec p { font-size: 11px; color: var(--txt-dim); margin-bottom: 6px; letter-spacing: 1px; }
+.lic-banner {
+  border: 1px solid rgba(255, 77, 106, .5); background: rgba(255, 77, 106, .1);
+  color: #ffb3c0; font-size: 12px; padding: 8px 14px; margin-bottom: 10px;
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+}
+.lic-banner.grace { border-color: rgba(255, 200, 87, .5); background: rgba(255, 200, 87, .08); color: var(--yellow, #ffc857); }
 </style>
