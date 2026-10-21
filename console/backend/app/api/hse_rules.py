@@ -104,6 +104,8 @@ async def get_config(r=Depends(deps.get)) -> dict:
         "embedding_url": h.get("embedding_url", ""),
         "embedding_model": h.get("embedding_model", "bge-m3"),
         "alpha": float(h.get("alpha", 0.5) or 0.5),
+        "judge_url": h.get("judge_url", ""),
+        "judge_model": h.get("judge_model", ""),
     }}
 
 
@@ -111,15 +113,23 @@ class ConfigIn(BaseModel):
     embedding_url: str = ""
     embedding_model: str = "bge-m3"
     alpha: float = 0.5
+    judge_url: str = ""
+    judge_model: str = ""
 
 
 @router.put("/config", dependencies=[Depends(require_role("operator")), Depends(require_engine_cap("alpha"))])
 async def put_config(req: ConfigIn, r=Depends(deps.get)) -> dict:
-    await r.hset(CONFIG_KEY, mapping={
+    mapping = {
         "embedding_url": req.embedding_url,
         "embedding_model": req.embedding_model,
         "alpha": str(max(0.0, min(1.0, req.alpha))),
-    })
+        "judge_url": req.judge_url,
+        "judge_model": req.judge_model,
+    }
+    # 裁判配置属 ENT：写非空 judge_* 需 judge 能力位
+    if req.judge_url or req.judge_model:
+        await require_engine_cap("judge")(r)
+    await r.hset(CONFIG_KEY, mapping=mapping)
     return {"ok": True}
 
 
@@ -134,6 +144,43 @@ async def get_replay(limit: int = 100, r=Depends(deps.get)) -> dict:
         except json.JSONDecodeError:
             continue
     return {"replay": out}
+
+
+# ---------- 决策统计（ENT auto 轻量版：replay 聚合，规则效果仪表盘） ----------
+@router.get("/stats")
+async def get_stats(r=Depends(deps.get)) -> dict:
+    raw = await r.lrange("hs:hse:replay", 0, -1)
+    per_rule: dict[str, dict] = {}
+    total = hit = shadow = 0
+    for line in raw:
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        total += 1
+        name = e.get("rule_name") or "（未命中）"
+        st = per_rule.setdefault(name, {"hits": 0, "conf_sum": 0.0,
+                                        "lat_sum": 0.0, "shadow": 0, "last_ts": 0})
+        if e.get("shadow"):
+            shadow += 1
+            st["shadow"] += 1
+        if e.get("matched_rule"):
+            hit += 1
+            st["hits"] += 1
+            st["conf_sum"] += float(e.get("confidence") or 0)
+            st["lat_sum"] += float(e.get("latency_ms") or 0)
+            st["last_ts"] = max(st["last_ts"], e.get("ts") or 0)
+    rules_out = [{
+        "rule_name": name,
+        "hits": st["hits"],
+        "avg_conf": round(st["conf_sum"] / st["hits"], 3) if st["hits"] else 0,
+        "avg_latency_ms": round(st["lat_sum"] / st["hits"], 1) if st["hits"] else 0,
+        "shadow_hits": st["shadow"],
+        "last_hit": st["last_ts"],
+    } for name, st in sorted(per_rule.items(), key=lambda kv: -kv[1]["hits"])]
+    return {"total": total, "hit": hit, "shadow": shadow,
+            "hit_rate": round(hit / total, 3) if total else 0,
+            "rules": rules_out}
 
 
 # ---------- 单规则写操作（参数化路径须最后注册，避免吃掉 /config 等字面量路由） ----------

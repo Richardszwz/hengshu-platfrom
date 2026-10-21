@@ -85,8 +85,23 @@
                  placeholder="阈值" title="语义阈值（留空=模型阈值>默认0.62）" :disabled="!semanticOk" />
           <label class="chk"><input type="checkbox" v-model="hse.shadow" title="命中只记录不执行" /> 影子</label>
         </div>
+        <!-- ENT：裁判条件（小 LLM YES/NO 终裁；裁判端点在 系统设置 配） -->
+        <div class="hf-row">
+          <input v-model.trim="hse.judgeQ" class="inp" :disabled="!judgeOk"
+            :placeholder="judgeOk
+              ? '裁判问题（ENT，可空=默认：该请求是否需要强推理/代码大模型？）——裁判答 YES 才命中'
+              : '🔒 裁判条件需 ENT License + 系统设置配置裁判端点'" />
+        </div>
       </form>
       <p v-if="hseError" class="err">{{ hseError }}</p>
+      <!-- 决策统计（ENT auto 轻量版） -->
+      <div v-if="stats.total" class="stats-row">
+        <span>决策 <b class="mono">{{ stats.total }}</b></span>
+        <span>命中率 <b class="mono cyan">{{ (stats.hit_rate * 100).toFixed(0) }}%</b></span>
+        <span>影子命中 <b class="mono">{{ stats.shadow }}</b></span>
+        <span v-for="s in stats.rules.slice(0, 4)" :key="s.rule_name" class="dim" style="font-size:11px">
+          {{ s.rule_name }}: {{ s.hits }}次/置信{{ s.avg_conf }}/{{ s.avg_latency_ms }}ms</span>
+      </div>
       <table class="tbl">
         <thead><tr>
           <th style="width:70px">优先级</th><th>规则</th><th>条件</th><th>→ 目标</th>
@@ -138,24 +153,33 @@ const onlineModels = ref<string[]>([])
 /* ---------- HSE 智能路由规则 ---------- */
 const hseRules = ref<any[]>([])
 const hseError = ref('')
+const stats = reactive({ total: 0, hit_rate: 0, shadow: 0, rules: [] as any[] })
 const hse = reactive({
   name: '', priority: 100, enabled: true,
   keywords: '', scope: 'last_user',
   ctxMin: '' as any, ctxMax: '' as any,
   codeBlock: '', lang: '', model: '', tier: '',
-  examples: '', threshold: '' as any, shadow: false
+  examples: '', threshold: '' as any, shadow: false, judgeQ: ''
 })
 
 /* ---------- 引擎配置（PRO）已移至系统设置页 ---------- */
 const semanticOk = ref(false)  // PRO/ENT 授权 + 已接入 embedding 才可填语义条件
+const judgeOk = ref(false)     // ENT 授权 + 已配裁判端点
 async function semanticGateLoad() {
   try {
     const lic = await api.licenseStatus()
     const pro = !!lic?.ok && lic?.edition && lic.edition !== 'STD'
+    judgeOk.value = false
+    if (lic?.ok && lic?.edition === 'ENT') {
+      try {
+        const c = await api.hseConfig()
+        judgeOk.value = !!(c.config?.judge_url && c.config?.judge_model)
+      } catch { /* 忽略 */ }
+    }
     if (!pro) { semanticOk.value = false; return }
     const st = await api.hseEmbedStatus()
     semanticOk.value = !!st.ok
-  } catch { semanticOk.value = false }
+  } catch { semanticOk.value = false; judgeOk.value = false }
 }
 
 function condText(w: any): string {
@@ -167,6 +191,7 @@ function condText(w: any): string {
   if (w?.has_code_block === false) parts.push('无代码块')
   if (w?.lang) parts.push(w.lang === 'zh' ? '中文' : '英文')
   if (w?.semantic?.examples?.length) parts.push(`语义[${w.semantic.examples.length}例句${w.semantic.threshold ? '·阈值' + w.semantic.threshold : ''}]`)
+  if (w?.judge) parts.push('裁判')
   return parts.join(' ∧ ') || '无条件'
 }
 
@@ -174,6 +199,7 @@ async function hseLoad() {
   try {
     const d = await api.hseRules()
     hseRules.value = (d.rules ?? []).slice().sort((a: any, b: any) => b.priority - a.priority)
+    try { Object.assign(stats, await api.hseStats()) } catch { /* replay 未启用 */ }
   } catch { /* 引擎规则接口失败不阻塞页面 */ }
 }
 
@@ -214,6 +240,7 @@ async function hseAdd() {
     when.semantic = { examples: exs }
     if (hse.threshold !== '' && hse.threshold != null) when.semantic.threshold = Number(hse.threshold)
   }
+  if (hse.judgeQ && judgeOk.value) when.judge = { question: hse.judgeQ }
   const action: any = {}
   if (hse.model) action.model = hse.model
   else if (hse.tier) action.tier = hse.tier
@@ -224,7 +251,7 @@ async function hseAdd() {
                               shadow: hse.shadow })
     hse.name = ''; hse.keywords = ''; hse.ctxMin = ''; hse.ctxMax = ''
     hse.codeBlock = ''; hse.lang = ''; hse.model = ''; hse.tier = ''
-    hse.examples = ''; hse.threshold = ''; hse.shadow = false
+    hse.examples = ''; hse.threshold = ''; hse.shadow = false; hse.judgeQ = ''
     await hseLoad()
   } catch (e: any) { hseError.value = e?.response?.data?.detail || '添加失败' }
 }
@@ -314,4 +341,6 @@ onMounted(() => { load(); hseLoad(); semanticGateLoad() })
 .sem-inp { flex: 1; font-size: 11px; resize: vertical; font-family: inherit; }
 .sem-inp:disabled { opacity: .5; }
 .shadow-tag { font-size: 10px; color: var(--yellow, #ffc857); margin-left: 6px; }
+.stats-row { display: flex; gap: 18px; padding: 8px 2px 12px; font-size: 12px; color: var(--txt-dim); flex-wrap: wrap; }
+.stats-row b { color: var(--txt); }
 </style>

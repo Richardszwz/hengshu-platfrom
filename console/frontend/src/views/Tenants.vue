@@ -48,6 +48,7 @@ curl {{ apiBase }}/chat/completions \
       <form class="t-form" @submit.prevent="create">
         <input v-model.trim="newId" class="inp" placeholder="租户标识（小写字母/数字/-_）" required />
         <input v-model.number="newQps" class="inp qps" type="number" min="1" max="10000" placeholder="QPS 上限" />
+        <input v-model.trim="newAllowed" class="inp" placeholder="模型白名单（ENT，逗号分隔；空=不限）" />
         <button class="btn btn-cyan" type="submit">创建租户</button>
       </form>
       <div v-if="createdKey" class="key-banner">
@@ -57,17 +58,19 @@ curl {{ apiBase }}/chat/completions \
       <p v-if="error" class="err">{{ error }}</p>
       <table class="tbl">
         <thead>
-          <tr><th>租户</th><th>QPS 上限</th><th>累计 TOKENS</th><th>创建时间</th><th style="width:70px"></th></tr>
+          <tr><th>租户</th><th>QPS 上限</th><th>模型白名单</th><th>累计 TOKENS</th><th>创建时间</th><th style="width:140px"></th></tr>
         </thead>
         <tbody>
           <tr v-for="t in tenants" :key="t.tenant_id">
             <td class="mono cyan">{{ t.tenant_id }}</td>
             <td class="mono">{{ t.qps_limit || '-' }}</td>
+            <td class="mono" style="font-size:11px">{{ t.allowed_models || '不限' }}
+              <button class="mini-btn" @click="editAllowed(t)">编辑</button></td>
             <td class="mono">{{ t.tokens_total || '0' }}</td>
             <td class="mono dim">{{ t.created ? new Date(+t.created * 1000).toLocaleString() : '-' }}</td>
             <td><button class="mini-btn danger" @click="del(t.tenant_id)">删除</button></td>
           </tr>
-          <tr v-if="!tenants.length"><td colspan="5" class="empty">暂无租户</td></tr>
+          <tr v-if="!tenants.length"><td colspan="6" class="empty">暂无租户</td></tr>
         </tbody>
       </table>
     </div>
@@ -82,9 +85,23 @@ import { api } from '../api/client'
 const tenants = ref<any[]>([])
 const newId = ref('')
 const newQps = ref(10)
+const newAllowed = ref('')
 const createdKey = ref('')
 const createdId = ref('')
 const error = ref('')
+
+async function editAllowed(t: any) {
+  const cur = t.allowed_models || ''
+  const v = prompt(`租户 ${t.tenant_id} 模型白名单（逗号分隔；清空=不限）`, cur)
+  if (v === null) return
+  error.value = ''
+  try {
+    await api.updateTenant(t.tenant_id, {
+      allowed_models: v.split(/[,，]/).map((s: string) => s.trim()).filter(Boolean)
+    })
+    await load()
+  } catch (e: any) { error.value = e?.response?.data?.detail || '更新失败' }
+}
 
 // 对外 API 统一入口（Router 端口默认 9000，随部署环境变量变化）
 const apiBase = `${location.protocol}//${location.hostname}:9000/v1`
@@ -96,9 +113,12 @@ async function load() {
 async function create() {
   error.value = ''; createdKey.value = ''
   try {
-    const d = await api.createTenant({ tenant_id: newId.value, qps_limit: newQps.value })
+    const d = await api.createTenant({
+      tenant_id: newId.value, qps_limit: newQps.value,
+      allowed_models: newAllowed.value.split(/[,，]/).map((s: string) => s.trim()).filter(Boolean)
+    })
     createdKey.value = d.api_key; createdId.value = d.tenant_id
-    newId.value = ''
+    newId.value = ''; newAllowed.value = ''
     await load()
   } catch (e: any) { error.value = e?.response?.data?.detail || '创建失败' }
 }

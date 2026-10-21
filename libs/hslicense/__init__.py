@@ -31,7 +31,7 @@ MCowBQYDK2VwAyEAr63donKswElpHvDWFc+5v6qvA30BcNjx5IOs4wmVvto=
 
 ALL_CAPS = ["keyword", "context", "structure",
             "semantic", "replay", "alpha",
-            "judge", "affinity", "auto"]
+            "judge", "affinity", "auto", "tenant_isolation"]
 EDITION_CAPS = {
     "STD": ["keyword", "context", "structure"],
     "PRO": ["keyword", "context", "structure", "semantic", "replay", "alpha"],

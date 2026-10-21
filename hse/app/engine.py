@@ -15,6 +15,7 @@ from typing import Any
 
 from .config import settings
 from .embedding import EmbedClient, cosine
+from .judge import JudgeClient
 from .signals import EVALUATORS, SIGNAL_CAPS, ReqCtx
 
 _SPLIT_RE = re.compile(r"[\s，。！？、；：,.!?;:'\"（）()\[\]{}<>《》]+")
@@ -47,6 +48,7 @@ class Engine:
         self._cfg_at = 0.0
         self._cfg: dict[str, Any] = {}
         self.embedder = EmbedClient("", "bge-m3")
+        self.judge = JudgeClient()
 
     async def rules(self) -> list[dict]:
         now = time.time()
@@ -77,6 +79,8 @@ class Engine:
                 model = self._cfg.get("embedding_model", "bge-m3")
                 if url != self.embedder.url or model != self.embedder.model:
                     self.embedder.configure(url, model)
+                self.judge.configure(self._cfg.get("judge_url", ""),
+                                     self._cfg.get("judge_model", ""))
             except Exception:  # noqa: BLE001
                 pass
             self._cfg_at = now
@@ -184,6 +188,19 @@ class Engine:
                     continue
                 conf = round(score, 4)
                 fired.append(f"sem:{conf:.2f}>={thr:.2f}")
+            # 裁判条件（ENT）：最贵的信号放最后；裁判不可用/回答不清 → 规则跳过
+            jcfg = when.get("judge")
+            if jcfg is not None:
+                verdict, raw = await self.judge.ask(
+                    jcfg.get("question") or "该请求是否需要强推理/代码能力的大模型来回答？",
+                    ctx.prompt)
+                if verdict is None:
+                    skipped.append(f"{rule.get('name')}({raw})")
+                    continue
+                if not verdict:
+                    continue
+                conf = max(conf, 0.85)
+                fired.append("judge:YES")
             action = rule.get("action") or {}
             prio = int(rule.get("priority", 0))
             target = action.get("model") or action.get("tier") or ""

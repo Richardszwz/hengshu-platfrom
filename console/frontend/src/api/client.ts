@@ -82,6 +82,7 @@ export const api = {
     axios.get(`/api/services/${node}/${name}/logs`, { params: { tail } }).then(r => r.data),
   tenants: () => axios.get('/api/tenants').then(r => r.data),
   createTenant: (payload: object) => axios.post('/api/tenants', payload).then(r => r.data),
+  updateTenant: (id: string, payload: object) => axios.put(`/api/tenants/${id}`, payload).then(r => r.data),
   deleteTenant: (id: string) => axios.delete(`/api/tenants/${id}`).then(r => r.data),
   rules: () => axios.get('/api/rules').then(r => r.data),
   upsertRule: (type: string, model: string) =>
@@ -106,6 +107,7 @@ export const api = {
   hseConfig: () => axios.get('/api/hse/rules/config').then(r => r.data),
   hsePutConfig: (payload: object) => axios.put('/api/hse/rules/config', payload).then(r => r.data),
   hseReplay: (limit = 100) => axios.get('/api/hse/rules/replay', { params: { limit } }).then(r => r.data),
+  hseStats: () => axios.get('/api/hse/rules/stats').then(r => r.data),
   hseEmbedStatus: () => axios.get('/api/hse/embed/status').then(r => r.data),
   hseEmbedDeploy: (payload: object) => axios.post('/api/hse/embed/deploy', payload).then(r => r.data)
 }

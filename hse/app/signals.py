@@ -67,6 +67,7 @@ SIGNAL_CAPS = {
     "ctx_min": "context", "ctx_max": "context",
     "has_code_block": "structure", "lang": "structure",
     "semantic": "semantic",
+    "judge": "judge",
 }
 
 EVALUATORS = {

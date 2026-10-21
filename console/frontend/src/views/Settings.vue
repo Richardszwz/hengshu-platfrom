@@ -100,6 +100,16 @@
           <button class="btn ghost" @click="saveCfg">保存 α</button>
           <span class="dim" style="align-self:center;font-size:11px">越高语义路由越激进</span>
         </div>
+        <!-- 裁判（ENT）：小 LLM YES/NO 判定，borderline 请求的最终仲裁 -->
+        <div class="row" style="border-top:1px dashed var(--line)">
+          <span class="k" style="align-self:center">裁判（ENT）</span>
+          <template v-if="engineEnt">
+            <input v-model.trim="cfg.judge_url" class="inp" placeholder="裁判端点，如 http://192.168.66.50:8100（OpenAI 兼容 chat）" />
+            <input v-model.trim="cfg.judge_model" class="inp" style="flex:0 0 150px" placeholder="裁判模型名" />
+            <button class="btn ghost" @click="saveCfg">保存裁判</button>
+          </template>
+          <span v-else class="dim" style="align-self:center;font-size:11px">🔒 需 ENT License</span>
+        </div>
         <p v-if="deployMsg || cfgMsg" class="msg" :class="embedStatus.ok ? 'ok' : ''">{{ deployMsg || cfgMsg }}</p>
       </template>
     </div>
@@ -208,9 +218,11 @@ const msg = reactive({ webhook: '', webhookOk: false, pwd: '', pwdOk: false, use
 const lic = ref<any>(null)
 const licText = ref('')
 const enginePro = computed(() => !!lic.value?.ok && lic.value?.edition && lic.value.edition !== 'STD')
+const engineEnt = computed(() => !!lic.value?.ok && lic.value?.edition === 'ENT')
 
 /* ---------- 语义引擎（embedding，PRO/ENT 门控） ---------- */
-const cfg = reactive({ embedding_url: '', embedding_model: 'bge-m3', alpha: 0.5 })
+const cfg = reactive({ embedding_url: '', embedding_model: 'bge-m3', alpha: 0.5,
+                       judge_url: '', judge_model: '' })
 const cfgMsg = ref('')
 const embedStatus = reactive({ url: '', model: 'bge-m3', ok: false, note: '', deploying: false, step: '' })
 const deploy = reactive({ target: 'local', port: 11434, model: 'bge-m3', models_dir: '', ssh_user: '', ssh_pass: '' })
@@ -241,7 +253,8 @@ async function saveCfg() {
   cfgMsg.value = ''
   try {
     await api.hsePutConfig({ embedding_url: cfg.embedding_url,
-                             embedding_model: cfg.embedding_model, alpha: cfg.alpha })
+                             embedding_model: cfg.embedding_model, alpha: cfg.alpha,
+                             judge_url: cfg.judge_url, judge_model: cfg.judge_model })
     cfgMsg.value = '已保存（引擎 5s 内热更）'
     await embedStatusLoad()
   } catch (e: any) {

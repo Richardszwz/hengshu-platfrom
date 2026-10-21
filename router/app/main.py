@@ -9,6 +9,7 @@ P0 的 Mock 说明：模拟节点的 /v1/chat/completions 由 scripts/mock_agent
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -76,8 +77,10 @@ async def auth_tenant(ctx: dict) -> dict:
     t = await r.hgetall(f"hs:tenant:{tid}")
     if not t:
         raise HTTPException(403, "tenant not found")
+    allowed = {m.strip() for m in (t.get("allowed_models") or "").split(",") if m.strip()}
     ctx.update(tid=tid, tenant=t.get("name", tid),
-               qps_limit=int(t.get("qps_limit", "0")), checked=True)
+               qps_limit=int(t.get("qps_limit", "0")), checked=True,
+               allowed_models=allowed)
     return ctx
 
 
@@ -102,6 +105,38 @@ async def _record_usage(tid: str, usage: dict) -> None:
     total = int(usage.get("prompt_tokens") or 0) + int(usage.get("completion_tokens") or 0)
     if total > 0:
         await redis().hincrby(f"hs:tenant:{tid}", "tokens_total", total)
+
+
+# ---------- 前缀亲和（ENT affinity，Dynamo KV-aware 思路的轻量版） ----------
+_caps_cache: tuple[float, set[str]] = (0.0, set())
+
+
+async def _engine_caps() -> set[str]:
+    """从已激活 license 读引擎能力位（60s 缓存；license 由 console 激活时验签，可信）。"""
+    global _caps_cache
+    now = time.time()
+    if now - _caps_cache[0] < 60:
+        return _caps_cache[1]
+    try:
+        raw = await redis().get("hs:license:file")
+        caps = set((json.loads(raw).get("engine") or {}).get("caps") or []) if raw else set()
+    except Exception:  # noqa: BLE001
+        caps = _caps_cache[1]  # 抖动用旧缓存
+    _caps_cache = (now, caps)
+    return caps
+
+
+def _prefix_hash(messages: list[dict]) -> str:
+    """前缀指纹：首条消息前 64 字符 sha1——同前缀请求大概率共享 KV cache block。"""
+    if not messages:
+        return ""
+    first = messages[0].get("content") or ""
+    if isinstance(first, list):
+        first = " ".join(str(b.get("text", "")) for b in first if isinstance(b, dict))
+    first = str(first)[:64]
+    if len(first) < 16:      # 太短的前缀没有亲和价值
+        return ""
+    return hashlib.sha1(first.encode()).hexdigest()[:16]
 
 
 # ---------- OpenAI 兼容 ----------
@@ -222,10 +257,31 @@ async def chat(req: ChatReq, x_session_id: str | None = Header(default=None),
         raise HTTPException(503, f"model '{model}' has no live instance"
                                  + (f" (type '{rule_type}' 映射)" if rule_type and model != req.model else ""))
 
+    # 租户模型白名单（ENT 多租户隔离）：过滤出该租户被授权的实例
+    allowed = ctx.get("allowed_models") or set()
+    if allowed:
+        candidates = [c for c in candidates if c.model in allowed]
+        if not candidates:
+            raise HTTPException(403, f"租户 '{ctx['tenant']}' 未被授权使用模型 "
+                                     f"'{model}'（白名单: {', '.join(sorted(allowed))}）")
+        # 白名单兜底后对外模型名以实际实例为准
+        model = candidates[0].model if model in ("", "auto", "*") else model
+
     bound = await sessions.get_binding(sid)
     bound_id = bound[1] if bound and bound[0] == model else None
     if bound_id and all(i.inst_id != bound_id for i in candidates):
         bound_id = None                       # 原实例已死 → 迁移
+
+    # 前缀亲和（ENT affinity）：同前缀请求优先回原实例（KV cache 命中概率高）
+    phash = ""
+    if "affinity" in await _engine_caps():
+        phash = _prefix_hash(req.messages)
+        if phash:
+            aff = await redis().get(f"hs:affinity:{phash}")
+            if aff and any(c.inst_id == aff for c in candidates):
+                candidates = (  # 亲和实例置顶（pick 在同负载下取前）
+                    [c for c in candidates if c.inst_id == aff]
+                    + [c for c in candidates if c.inst_id != aff])
 
     payload = {"model": model, "messages": req.messages,
                "stream": req.stream}
@@ -251,6 +307,8 @@ async def chat(req: ChatReq, x_session_id: str | None = Header(default=None),
             resp = await _proxy(inst, payload, req.stream)
             await sessions.bind(sid, model, inst.inst_id)
             await sessions.append_history(sid, req.messages)
+            if phash:  # 亲和回写（30min TTL，随流量滚动）
+                await redis().setex(f"hs:affinity:{phash}", 1800, inst.inst_id)
             # 注：不再逐请求写 route ▸ 事件——每秒数十条会把审计/告警淹出环形缓冲
             if not req.stream:
                 body = json.loads(resp)
