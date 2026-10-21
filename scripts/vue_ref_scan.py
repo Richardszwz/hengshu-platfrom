@@ -42,10 +42,15 @@ def scan(path):
             part = part.strip().split(':')[-1].split('=')[0].strip()
             if re.match(r'^[A-Za-z_$][\w$]*$', part): declared.add(part)
     # 函数参数/箭头函数局部变量（粗糙）
-    for d in re.finditer(r'(?:function\s*\(|\()\s*([A-Za-z_$][\w$]*(?:\s*:\s*[^,)=]+)?(?:\s*,\s*[A-Za-z_$][\w$]*(?:\s*:\s*[^,)=]+)?)*)\s*\)\s*=>', script):
+    for d in re.finditer(r'(?:function\s*|\()\s*([A-Za-z_$][\w$]*(?:\s*:\s*[^,)=]+)?(?:\s*,\s*[A-Za-z_$][\w$]*(?:\s*:\s*[^,)=]+)?)*)\s*\)\s*=>', script):
         for p in d.group(1).split(','):
             p = p.strip().split(':')[0].strip()
             if p: declared.add(p)
+    # defineProps<{ a: string; b?: number }>() 泛型形式（TS 字面量 props）
+    for d in re.finditer(r'defineProps<\s*\{([^}]*)\}', script, re.S):
+        for part in d.group(1).split(';'):
+            nm = part.split(':')[0].strip().rstrip('?')
+            if re.match(r'^[A-Za-z_$][\w$]*$', nm): declared.add(nm)
 
     # 模板表达式：{{ ... }}、:attr="..."、@evt="..."、v-if/for/show/model
     exprs = re.findall(r'\{\{(.*?)\}\}', template, re.S)
@@ -64,19 +69,27 @@ def scan(path):
 
     suspects = {}
     for ex in exprs:
+        # 表达式内联箭头参数是局部变量（e => f(e) 的 e）——先收集进 locals 再剥
+        expr_locals = set(locals_)
+        for am in re.finditer(r'\(\s*([A-Za-z_$][\w$]*(?:\s*,\s*[A-Za-z_$][\w$]*)*)\s*\)\s*=>', ex):
+            for nm in am.group(1).split(','):
+                nm = nm.strip()
+                if re.match(r'^[A-Za-z_$][\w$]*$', nm): expr_locals.add(nm)
+        for am in re.finditer(r'(?<![.\w$])([A-Za-z_$][\w$]*)\s*=>', ex):
+            expr_locals.add(am.group(1))
         # 取表达式中所有标识符（排除属性访问 .x 和字符串）
         ex2 = re.sub(r'(["\'])(?:\\.|(?!\1).)*\1', ' ', ex)  # 去字符串
         ex2 = re.sub(r'`(?:\\.|[^`])*`', ' ', ex2)  # 去模板串（可能漏 ${} 内变量，够用）
         # 去对象字面量键（{ key: ... } 的 key 不是变量引用）
         ex2 = re.sub(r'([{,]\s*)([A-Za-z_$][\w$]*)\s*:', r'\1', ex2)
-        # 去箭头函数参数 (x) => 或 x =>
+        # 去箭头函数参数声明 (x) => 或 x =>
         ex2 = re.sub(r'\(\s*[A-Za-z_$][\w$]*(?:\s*,\s*[A-Za-z_$][\w$]*)*\s*\)\s*=>', ' ', ex2)
         ex2 = re.sub(r'(?<![.\w$])[A-Za-z_$][\w$]*\s*=>', ' ', ex2)
         ex2 = re.sub(r'\$event(?:\.\w+)*', ' ', ex2)  # Vue 注入
         ex2 = re.sub(r'as\s+[A-Za-z_$][\w$]*', ' ', ex2)  # TS as 断言
         for tok in re.finditer(r'(?<![.\w$])([A-Za-z_$][\w$]*)', ex2):
             name = tok.group(1)
-            if name in GLOBALS or name in declared or name in locals_:
+            if name in GLOBALS or name in declared or name in expr_locals:
                 continue
             if name in ('in', 'of', 'as', 'true', 'false', 'null', 'undefined', 'typeof', 'new', 'delete', 'void', 'instanceof', 'HTMLSelectElement', 'HTMLInputElement'):
                 continue
