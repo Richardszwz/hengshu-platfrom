@@ -44,7 +44,7 @@ async def _shutdown() -> None:
 
 @app.get("/api/healthz")
 async def healthz() -> dict:
-    return {"ok": True, "service": "hengshu-console"}
+    return {"ok": True, "service": "hengshu-console", "version": settings.platform_version}
 
 
 for m in (auth, nodes, services, dashboard, tenants, rules, term, audits, settings_api, users,

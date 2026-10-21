@@ -4,6 +4,7 @@
     <div class="panel">
       <div class="p-head"><h3>运行信息</h3><span class="sub">部署级参数由环境变量决定，此处只读展示</span></div>
       <div class="info-grid" v-if="info">
+        <div class="info-item"><span class="k">平台版本</span><span class="v mono">衡枢 HENGSHU v{{ info.platform_version }}</span></div>
         <div class="info-item"><span class="k">Router 端口</span><span class="v mono">:{{ info.router_port }}</span></div>
         <div class="info-item"><span class="k">Router 管理员 Key</span>
           <span class="v" :class="info.router_api_key_set ? 'ok' : 'warn'">{{ info.router_api_key_set ? '已配置' : '未配置（ROUTER_API_KEY）' }}</span></div>

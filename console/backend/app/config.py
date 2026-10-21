@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     # JWT 签名密钥
     secret_key: str = "dev-only-insecure-secret-change-me"  # noqa: S105  # 开发默认；生产必须 SECRET_KEY 环境变量覆盖
     token_ttl: int = 12 * 3600
+    # 平台版本（与 pyproject.toml / git tag 同步）
+    platform_version: str = "1.0.0"
 
     # 凭证主密钥（派生 AES-GCM 密钥；与 Router/Agent 同值）
     master_key: str = "dev-only-insecure-master-change-me"

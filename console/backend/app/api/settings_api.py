@@ -51,6 +51,7 @@ async def get_settings(r=Depends(deps.get)) -> dict:
         "redis_ok": redis_ok,
         "install_tar_dir": settings.install_tar_dir,
         "token_ttl_hours": settings.token_ttl // 3600,
+        "platform_version": settings.platform_version,
     }
 
 

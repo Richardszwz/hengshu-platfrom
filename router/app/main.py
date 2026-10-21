@@ -188,7 +188,7 @@ async def images(req: ImageReq, ctx: dict = Depends(auth)) -> Response:
 
 @app.get("/healthz")
 async def healthz() -> dict:
-    return {"ok": True}
+    return {"ok": True, "version": "1.0.0"}
 
 
 @app.get("/v1/models")
