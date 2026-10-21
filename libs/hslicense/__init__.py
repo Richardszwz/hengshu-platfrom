@@ -23,9 +23,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey, Ed25519PublicKey)
 from cryptography.hazmat.primitives import serialization
 
-# 内嵌开发公钥（scripts/gen_license.py --gen-key 生成；生产环境用独立密钥对并替换）
+# 内嵌验签公钥（与 license 签发工具的 license_private.pem 配对；换钥=替换此处或设 HS_LICENSE_PUBKEY）
 _DEV_PUBKEY_PEM = b"""-----BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEAr63donKswElpHvDWFc+5v6qvA30BcNjx5IOs4wmVvto=
+MCowBQYDK2VwAyEAtOpgHPtWkSWTpiYUxHV8UNHO5i0TIEVqjaYs/esOf2M=
 -----END PUBLIC KEY-----
 """
 
