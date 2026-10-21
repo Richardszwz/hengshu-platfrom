@@ -22,7 +22,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from libs.hslicense import (ALL_CAPS, EDITION_CAPS, cluster_fingerprint,
                             gen_keypair, sign_payload)
 
-KEY_DIR = Path(__file__).resolve().parent / "dev_keys"
+# 密钥目录：源码模式=脚本旁 dev_keys/；PyInstaller exe 模式=exe 旁 license_keys/
+if getattr(sys, "frozen", False):
+    KEY_DIR = Path(sys.executable).resolve().parent / "license_keys"
+else:
+    KEY_DIR = Path(__file__).resolve().parent / "dev_keys"
 SK = KEY_DIR / "license_private.pem"
 PK = KEY_DIR / "license_public.pem"
 
@@ -43,23 +47,28 @@ def main() -> None:
     ap.add_argument("--edition", choices=["STD", "PRO", "ENT"], default="STD")
     ap.add_argument("--caps", default="", help="逗号分隔；缺省=edition 全集")
     ap.add_argument("-o", "--out", default="")
+    ap.add_argument("--key-dir", default="",
+                    help="密钥目录（缺省=exe 旁 license_keys/ 或脚本旁 dev_keys/）")
     args = ap.parse_args()
 
+    key_dir = Path(args.key_dir).resolve() if args.key_dir else KEY_DIR
+    sk, pk = key_dir / "license_private.pem", key_dir / "license_public.pem"
+
     if args.gen_key:
-        KEY_DIR.mkdir(exist_ok=True)
-        sk, pk = gen_keypair()
-        SK.write_bytes(sk)
-        PK.write_bytes(pk)
-        print(f"已生成：\n  私钥 {SK}（保密！）\n  公钥 {PK}")
+        key_dir.mkdir(parents=True, exist_ok=True)
+        sk_b, pk_b = gen_keypair()
+        sk.write_bytes(sk_b)
+        pk.write_bytes(pk_b)
+        print(f"已生成：\n  私钥 {sk}（保密！）\n  公钥 {pk}")
         return
 
     if args.pubkey:
-        print(PK.read_text())
+        print(pk.read_text())
         return
 
     if args.sign:
-        if not SK.exists():
-            sys.exit("先 --gen-key 生成密钥对")
+        if not sk.exists():
+            sys.exit(f"先 --gen-key 生成密钥对（{key_dir}）")
         def ts(d: str) -> int:
             return int(time.mktime(time.strptime(d, "%Y-%m-%d"))) if d else 0
         caps = ([c.strip() for c in args.caps.split(",") if c.strip()]
@@ -75,7 +84,7 @@ def main() -> None:
             "engine": {"edition": args.edition, "caps": caps,
                        "expires": ts(args.engine_expires) or ts(args.expires)},
         }
-        doc = sign_payload(payload, SK.read_bytes())
+        doc = sign_payload(payload, sk.read_bytes())
         text = json.dumps(doc, ensure_ascii=False, indent=2)
         if args.out:
             Path(args.out).write_text(text, encoding="utf-8")
