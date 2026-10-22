@@ -90,6 +90,28 @@
         </div>
       </div>
 
+      <!-- HSE 路由决策面板（replay 聚合；无数据不渲染——未授权 replay 或零流量时整块消失） -->
+      <div class="grid-hse" v-if="hse.total > 0">
+        <div class="panel corner">
+          <div class="p-title">HSE 路由决策 <span class="sub">DECISIONS · REPLAY 500 环</span></div>
+          <div class="hse-wrap">
+            <div class="hse-nums">
+              <div class="hse-num"><b class="mono">{{ hse.total }}</b><span>决策总数</span></div>
+              <div class="hse-num"><b class="mono cyan">{{ Math.round(hse.hit_rate * 100) }}%</b><span>规则命中率</span></div>
+              <div class="hse-num"><b class="mono" :class="{ warn: hse.shadow > 0 }">{{ hse.shadow }}</b><span>影子命中（只记录未执行）</span></div>
+            </div>
+            <div class="hse-rules">
+              <div v-for="r in hse.rules.slice(0, 5)" :key="r.rule_name" class="hse-rule-row">
+                <span class="hse-rule-name" :title="r.rule_name">{{ r.rule_name }}</span>
+                <div class="hse-bar"><i :style="{ width: hseBarPct(r.hits) + '%' }"></i></div>
+                <em class="mono">{{ r.hits }}</em>
+                <span class="hse-conf dim mono">置信 {{ r.avg_conf }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 节点卡片 -->
       <div class="nodes">
         <div v-for="n in nodeCards" :key="n.id" class="panel corner node" @click="openNode(n)">
@@ -183,7 +205,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, shallowRef } from 'vue'
 import * as echarts from 'echarts'
 import { api } from '../api/client'
 import AppLayout from '../components/AppLayout.vue'
@@ -191,6 +213,12 @@ import AppLayout from '../components/AppLayout.vue'
 /* ---------- 状态 ---------- */
 const summary = ref<any>(null)
 const services = ref<any[]>([])
+// HSE 决策统计（replay 聚合）
+const hse = reactive({ total: 0, hit_rate: 0, shadow: 0, rules: [] as any[] })
+const hseBarPct = (hits: number) => {
+  const max = Math.max(1, ...hse.rules.map(r => r.hits))
+  return Math.round(hits / max * 100)
+}
 const nodeUtils = ref<Record<string, number[]>>({})
 const qpsSeries = ref<number[]>([])
 const ttftSeries = ref<number[]>([])
@@ -410,6 +438,14 @@ async function refresh() {
     qpsSeries.value = ser.qps
     ttftSeries.value = ser.ttft
     nodeUtils.value = ser.node_utils
+    // HSE 决策统计（replay 聚合；未授权/无流量时静默保持隐藏）
+    try {
+      const st = await api.hseStats()
+      hse.total = st.total ?? 0
+      hse.hit_rate = st.hit_rate ?? 0
+      hse.shadow = st.shadow ?? 0
+      hse.rules = st.rules ?? []
+    } catch { /* 无 replay 授权时 401/403——面板保持隐藏 */ }
     renderCharts()
     if (drawerOpen.value && drawerNode.value) {
       const nid = (drawerNode.value as any).id
@@ -565,6 +601,22 @@ onUnmounted(() => {
 .chart-box { height: 180px; }
 .chart-box.tall { height: 220px; }
 .grid-b { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+/* HSE 决策面板 */
+.grid-hse { margin-top: 12px; }
+.hse-wrap { display: flex; gap: 24px; padding: 12px 16px 16px; align-items: stretch; }
+.hse-nums { display: flex; gap: 28px; align-items: center; flex: 0 0 auto; }
+.hse-num { display: flex; flex-direction: column; gap: 2px; }
+.hse-num b { font-size: 30px; font-weight: 600; }
+.hse-num span { font-size: 11px; color: var(--txt-dim); letter-spacing: 1px; }
+.hse-num .cyan { color: var(--cyan); }
+.hse-num .warn { color: var(--yellow); }
+.hse-rules { flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.hse-rule-row { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.hse-rule-name { flex: 0 0 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hse-bar { flex: 1; height: 8px; background: rgba(255,255,255,.06); border-radius: 2px; overflow: hidden; }
+.hse-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--cyan-dim), var(--cyan)); border-radius: 2px; }
+.hse-rule-row em { font-style: normal; min-width: 34px; text-align: right; color: var(--cyan); }
+.hse-conf { font-size: 11px; }
 .donut-wrap { position: relative; height: 190px; }
 .donut-center {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
