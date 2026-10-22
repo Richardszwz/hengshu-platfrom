@@ -129,7 +129,19 @@ async def launch_service(node_id: str, req: StartServiceReq, r=Depends(deps.get)
                                        node=node_id)
             addr = await _agent_addr(node_id, r)
             async with httpx.AsyncClient(timeout=120.0, trust_env=False) as c:
-                await c.post(f"{addr}/services/start", json=req.model_dump())
+                resp = await c.post(f"{addr}/services/start", json=req.model_dump())
+                # 镜像缺失 → 从镜像库自动分发装载后重试一次（新框架上线自动化）
+                if resp.status_code == 502 and "镜像拉取失败且本地不存在" in resp.text:
+                    from .. import image_registry
+                    await model_dist._emit(r, "INFO",
+                                           f"svc ▸ {node_id} 缺镜像 {req.image}，镜像库自动分发中…",
+                                           node=node_id)
+                    await image_registry.push_image(r, node_id, req.image)
+                    resp = await c.post(f"{addr}/services/start", json=req.model_dump())
+                if resp.status_code != 200:
+                    await model_dist._emit(r, "ERR",
+                                           f"svc ▸ {node_id}/{req.name} 启动失败: {resp.text[:200]}",
+                                           node=node_id)
         except Exception as e:
             await model_dist._emit(r, "ERR",
                                    f"svc ▸ {node_id}/{req.name} 启动前准备失败: {e}",

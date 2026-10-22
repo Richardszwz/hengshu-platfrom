@@ -14,10 +14,11 @@ import os
 import re
 import socket
 import time
+import uuid
 
 import redis.asyncio as aioredis
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from pydantic import BaseModel
 
 from . import netinfo, rayctl, service_ctl
@@ -504,3 +505,74 @@ async def models_download(req: ModelDlReq) -> dict:
                           + " / ".join(res["tail"][-2:])[:200])
     fire_bg(_bg())
     return {"accepted": req.repo, "note": "拉取中（进度见节点系统日志）"}
+
+
+# ---------- 服务镜像离线装载（console 镜像库推送链路） ----------
+# 新节点/新框架上线自动化：console 把镜像 tar 流式推来，本端 docker load。
+
+class ImageLoadReq(BaseModel):
+    size: int = 0                    # 声明字节数（进度与完整性校验）
+    tag: str = ""                    # 期望的镜像名（装载后校验，日志用）
+
+
+@app.post("/images/load")
+async def images_load(request: Request, size: int = 0, tag: str = "") -> dict:
+    """接收镜像 tar（流式落盘，上传完成才返回）→ 后台 docker load（进度进节点系统日志）。
+
+    注意：请求体必须在 handler 返回前读完——受理制（先返回再读流）在 FastAPI 下行不通
+    （handler 返回即关连接，后台读 stream 必炸）。上传耗时=传输时间，调用方按 GB 级设超时。
+    """
+    tmp = f"/tmp/hengshu-img/hs-image-{int(time.time())}-{uuid.uuid4().hex[:6]}.tar"
+    written = 0
+    await _push_event("INFO", f"image ▸ 开始接收镜像 tar（{size / 2**30:.1f} GiB 声明）→ {tmp}")
+    try:
+        with open(tmp, "wb") as f:
+            async for chunk in request.stream():
+                f.write(chunk)
+                written += len(chunk)
+    except Exception as e:  # noqa: BLE001
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        await _push_event("ERR", f"image ▸ 接收中断: {type(e).__name__} {e}")
+        raise HTTPException(502, f"接收中断: {type(e).__name__}")
+    if size and written != size:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        await _push_event("ERR", f"image ▸ 接收字节数不符：{written} != 声明 {size}")
+        raise HTTPException(502, f"接收不完整 {written}/{size}")
+
+    async def _load_bg() -> None:
+        try:
+            await _push_event("INFO", f"image ▸ 接收完成 {written / 2**30:.2f} GiB，docker load 中…")
+            rc, out = await service_ctl._run(["docker", "load", "-i", tmp], timeout=1800)
+            if rc != 0:
+                raise RuntimeError(f"docker load 失败: {out[-300:]}")
+            loaded = [l.split(":")[-2].strip() + ":" + l.split(":")[-1].strip()
+                      for l in out.splitlines() if "Loaded image" in l]
+            await _push_event("OK", f"image ▸ 装载完成: {', '.join(loaded) or out[-120:]}")
+        except Exception as e:  # noqa: BLE001
+            await _push_event("ERR", f"image ▸ 装载失败: {type(e).__name__} {e}")
+        finally:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+    fire_bg(_load_bg())
+    return {"accepted": tag or "image-tar", "received": written,
+            "note": "接收完成，docker load 中（结果见节点系统日志）"}
+
+
+class ImageHasReq(BaseModel):
+    image: str
+
+
+@app.post("/images/has")
+async def images_has(req: ImageHasReq) -> dict:
+    """镜像是否已在本地（console 推送后轮询确认用）。"""
+    rc, _ = await service_ctl._run(["docker", "image", "inspect", req.image], timeout=15.0)
+    return {"image": req.image, "present": rc == 0}

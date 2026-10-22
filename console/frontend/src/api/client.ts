@@ -109,5 +109,8 @@ export const api = {
   hseReplay: (limit = 100) => axios.get('/api/hse/rules/replay', { params: { limit } }).then(r => r.data),
   hseStats: () => axios.get('/api/hse/rules/stats').then(r => r.data),
   hseEmbedStatus: () => axios.get('/api/hse/embed/status').then(r => r.data),
-  hseEmbedDeploy: (payload: object) => axios.post('/api/hse/embed/deploy', payload).then(r => r.data)
+  hseEmbedDeploy: (payload: object) => axios.post('/api/hse/embed/deploy', payload).then(r => r.data),
+  imagesLib: () => axios.get('/api/images').then(r => r.data),
+  imagePush: (node: string, image: string) =>
+    axios.post(`/api/images/push/${encodeURIComponent(node)}`, null, { params: { image } }).then(r => r.data)
 }

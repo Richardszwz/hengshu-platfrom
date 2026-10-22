@@ -241,6 +241,7 @@ curl http://<控制台IP>:9000/v1/chat/completions \
 2. SFTP 推送 → docker load → 起 Agent 容器
 3. TOFU 指纹登记（首次信任，变更会告警）
 4. 心跳上线
+5. **自动预置平台自研镜像**（镜像库中 `hengshu/*` 的 image-server 等，按节点架构选 tar）——新节点上线即可启动图像生成等框架服务，无需手工 docker load
 
 **气隙环境**：把 `dist/agent-x86_64.tar` / `agent-aarch64.tar` 放到 Console 的 `INSTALL_TAR_DIR`，安装走离线装载，无需外网。
 
@@ -272,7 +273,7 @@ curl http://<控制台IP>:9000/v1/chat/completions \
 |---|---|---|
 | 节点勾选 | 单选=单节点；勾 ≥2 台=多机 TP 并行 | S2 + S3 |
 | 服务/模型名 | 服务标识，也是路由模型名 | `Qwen3-8B` |
-| 镜像 | 推理容器镜像（可换镜像站前缀） | `docker.1ms.run/vllm/vllm-openai:latest` |
+| 镜像 | 推理容器镜像——**本地缺失时：先尝试节点在线拉取，失败则自动从控制台「服务镜像库」分发离线 tar 装载后重试启动** | `hengshu/image-server:latest-arm64` |
 | 启动命令 | 容器内执行；`{port}` 占位符自动替换 | `vllm serve /models/Qwen3-8B --port {port} --served-model-name Qwen3-8B` |
 | 服务端口 | 容器监听端口 | `8100` |
 | **服务类型** | **chat / embedding / image / custom**（见 6.3） | chat |
@@ -539,6 +540,7 @@ License 的 `max_nodes` 限制纳管节点数（0=不限）；超限时纳管/�
 | 运行信息 | 平台版本（衡枢 v1.0.0）、Router 端口、Redis 连通、登录态时长、气隙 tar 目录（只读） |
 | **授权** | 集群指纹复制、license 粘贴激活/移除（见 §11） |
 | **语义引擎** | Ollama 部署向导 + α 激进度 + 裁判端点（ENT）（见 §12；STD 时锁定提示） |
+| **服务镜像库** | INSTALL_TAR_DIR 下镜像 tar 清单（自动解析 RepoTags/架构/大小）；每行可选手动推送节点；启动缺镜像时自动分发 |
 | Webhook 通知 | 节点安装结果/高危拦截 POST 到指定 URL（可发测试事件） |
 | 修改管理员密码 | 立即生效（Redis 覆盖环境变量哈希），改后重新登录 |
 | 用户管理（admin） | 建用户/改角色/禁用/删除；viewer 只读、operator 运维、admin 全部 |

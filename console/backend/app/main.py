@@ -14,6 +14,7 @@ from .api import (
     dashboard,
     hse_embed,
     hse_rules,
+    images,
     license_api,
     nodes,
     rules,
@@ -48,7 +49,7 @@ async def healthz() -> dict:
 
 
 for m in (auth, nodes, services, dashboard, tenants, rules, term, audits, settings_api, users,
-          license_api, hse_rules, hse_embed):
+          license_api, hse_rules, hse_embed, images):
     app.include_router(m.router)
 
 # 前端 SPA：打包产物由 Dockerfile 拷入 static/。

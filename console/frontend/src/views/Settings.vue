@@ -115,6 +115,35 @@
       </template>
     </div>
 
+    <!-- 服务镜像库（离线 tar 管理 + 推送节点） -->
+    <div class="panel">
+      <div class="p-head">
+        <h3>服务镜像库</h3>
+        <span class="sub">INSTALL_TAR_DIR 下的镜像 tar · 启动服务缺镜像时自动分发 · 新节点纳管自动预置 hengshu/* 镜像</span>
+      </div>
+      <div v-if="!images.length" class="locked-tip">目录为空：把镜像 tar（buildx type=docker 产物）放入 INSTALL_TAR_DIR</div>
+      <table v-else class="tbl">
+        <thead><tr><th>镜像</th><th>架构</th><th>大小</th><th>文件</th><th style="width:200px">推送到节点</th></tr></thead>
+        <tbody>
+          <tr v-for="img in images" :key="img.tag">
+            <td class="mono" style="color:var(--cyan)">{{ img.tag }}</td>
+            <td class="mono">{{ img.arch }}</td>
+            <td class="mono">{{ img.size_mb >= 1024 ? (img.size_mb/1024).toFixed(1)+' GB' : img.size_mb+' MB' }}</td>
+            <td class="dim" style="font-size:11px">{{ img.file }}</td>
+            <td>
+              <select v-model="pushTarget[img.tag]" class="mini-sel">
+                <option value="">选节点…</option>
+                <option v-for="n in nodeList" :key="n.id" :value="n.id">{{ n.id }}</option>
+              </select>
+              <button class="mini-btn" :disabled="!pushTarget[img.tag] || imgPushing === img.tag"
+                      @click="doImagePush(img.tag)">{{ imgPushing === img.tag ? '推送中…' : '推送' }}</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-if="msg.images" class="msg" :class="msg.imagesOk ? 'ok' : 'bad'">{{ msg.images }}</p>
+    </div>
+
     <!-- Webhook 通知 -->
     <div class="panel">
       <div class="p-head">
@@ -215,7 +244,8 @@ const info = ref<any>(null)
 const webhookUrl = ref('')
 const webhookSource = ref('none')
 const busy = ref(false)
-const msg = reactive({ webhook: '', webhookOk: false, pwd: '', pwdOk: false, users: '', lic: '', licOk: false })
+const msg = reactive({ webhook: '', webhookOk: false, pwd: '', pwdOk: false, users: '', lic: '', licOk: false,
+                       images: '', imagesOk: false })
 const lic = ref<any>(null)
 const licText = ref('')
 const enginePro = computed(() => !!lic.value?.ok && lic.value?.edition && lic.value.edition !== 'STD')
@@ -229,6 +259,35 @@ const embedStatus = reactive({ url: '', model: 'bge-m3', ok: false, note: '', de
 const deploy = reactive({ target: 'local', port: 11434, model: 'bge-m3', models_dir: '', ssh_user: '', ssh_pass: '' })
 const deployMsg = ref('')
 const nodeList = ref<any[]>([])
+
+/* ---------- 服务镜像库 ---------- */
+const images = ref<any[]>([])
+const pushTarget = reactive<Record<string, string>>({})
+const imgPushing = ref('')
+
+async function imagesLoad() {
+  try {
+    const d = await api.imagesLib()
+    images.value = d.images ?? []
+  } catch { /* 忽略 */ }
+}
+
+async function doImagePush(tag: string) {
+  const nid = pushTarget[tag]
+  if (!nid) return
+  imgPushing.value = tag
+  msg.images = ''
+  try {
+    const d = await api.imagePush(nid, tag)
+    msg.images = `✓ ${d.note}`
+    msg.imagesOk = true
+  } catch (e: any) {
+    msg.images = e?.response?.data?.detail || '推送受理失败'
+    msg.imagesOk = false
+  } finally {
+    imgPushing.value = ''
+  }
+}
 
 async function cfgLoad() {
   try {
@@ -427,9 +486,10 @@ function saveRefresh() {
 }
 
 onMounted(async () => {
-  load(); loadUsers()
+  load(); loadUsers(); imagesLoad()
   await loadLic()
   if (enginePro.value) { cfgLoad(); embedStatusLoad(); nodesLoad() }
+  else { nodesLoad() }
 })
 </script>
 

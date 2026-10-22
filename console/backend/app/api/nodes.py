@@ -14,6 +14,9 @@ from ..keys import CRED_PREFIX, INST_PREFIX, NODE_PREFIX
 from ..license_guard import check_node_cap, require_active_base
 from ..security import current_user, require_role
 
+# fire-and-forget 后台任务持引用（防 GC，RUF006）
+_BG: set = set()
+
 router = APIRouter(prefix="/api/nodes", tags=["nodes"], dependencies=[Depends(current_user)])
 
 
@@ -158,6 +161,13 @@ async def install_node(node_id: str, req: NodeAddReq, r=Depends(deps.get)) -> di
         tar_dir=settings.install_tar_dir or None)
     # Webhook 通知（HENGSHU_WEBHOOK_URL 设置时启用）
     await hooks.emit("install.result", {"node_id": node_id, **result})
+    # 纳管成功后自动预置平台自研镜像（image-server 等；失败不阻塞纳管）
+    if result.get("ok", True):
+        import asyncio
+        from .images import auto_seed_node
+        t = asyncio.create_task(auto_seed_node(r, node_id))
+        _BG.add(t)
+        t.add_done_callback(_BG.discard)
     return result
 
 

@@ -137,6 +137,7 @@ async def install(r: aioredis.Redis, *, node_id: str, host: str, ssh_port: int,
                 "-e AGENT_PORT=9100 -p 9100:9100 "
                 "-v /var/run/docker.sock:/var/run/docker.sock "
                 "-v hengshu-agent-data:/data "
+                "-v /tmp/hengshu-img:/tmp/hengshu-img "   # 镜像 tar 落点须宿主机共享（docker daemon 是宿主进程读宿主文件系统）
                 f"--gpus all {agent_image}"
             )
             # 主机名传入容器（否则心跳 hostname 是容器 ID）
