@@ -74,7 +74,43 @@
 
 **目标：10 分钟跑通「纳管一台推理机 → 起一个模型 → 统一入口发问」。**
 
+### 2.0 部署前置条件检查清单
+
+逐项确认，全部打勾再开始：
+
+| 检查项 | 要求 | 确认方法 |
+|---|---|---|
+| 控制台主机 OS | Windows 10+/Linux（docker 可用） | `docker version` 能跑 |
+| Docker | 20.10+，buildx 可用（离线装载用） | `docker buildx version` |
+| 推理节点 | Linux（x86_64 或 aarch64），docker 可用，SSH 可达 | `ssh user@node "docker version"` |
+| 节点 GPU 驱动 | NVIDIA 驱动 + nvidia-container-toolkit（vllm 容器需要） | 节点上 `docker run --rm --gpus all nvidia/cuda:12.0.0-base nvidia-smi` |
+| 网络 | 控制台↔节点互通；节点↔Redis 互通；**集群内网不走系统代理** | 互 ping + `curl --noproxy '*'` 验证 |
+| 端口 | 8080(console)/9000(router)/9100(hse、节点 agent)/6379(redis) 未被占用 | `netstat -ano \| findstr 端口号`（Win）/ `ss -tlnp`（Linux） |
+| 磁盘 | 控制台 ≥5GB（tar+录屏）；节点按模型大小（27B 模型 ≈60GB） | `df -h` |
+| Redis | 7.x，无密码或内网信任域 | `redis-cli ping` → PONG |
+| 模型来源 | 在线（HF/ModelScope 镜像可达）或气隙（模型文件已拷入节点模型目录） | — |
+
+**目录约定（重要）**：每个节点一个统一的**模型根目录**（如 `/home/user/models`），模型以子目录形式存放（`/home/user/models/Qwen3-8B/`）。平台的模型分发、挂载、完整性校验全部围绕这个约定。
+
 ### 2.1 启动平台三件套
+
+**环境变量全表**（生产部署逐项过）：
+
+| 组件 | 变量 | 必填 | 说明 |
+|---|---|---|---|
+| Console | `REDIS_URL` | ✓ | Redis 内网地址 |
+| Console | `REDIS_ADVERTISE` | ✓ | 节点回连用的 Redis 地址（控制台多网卡时填节点可达的那个） |
+| Console | `ADMIN_PASSWORD_HASH` | ✓ | 管理员密码 bcrypt 哈希（生成命令见下） |
+| Console | `SECRET_KEY` | ✓ 生产 | JWT 签名密钥（开发默认值仅限试用） |
+| Console | `MASTER_KEY` | ✓ 生产 | 凭证加密主密钥（节点 SSH 凭证 AES-GCM） |
+| Console | `INSTALL_TAR_DIR` | 气隙必填 | agent tar 所在目录（容器内路径） |
+| Console | `TERM_RECORD_DIR` | 建议 | 终端录屏存储目录（挂卷持久化） |
+| Console | `TOKEN_TTL` | 否 | 登录态秒数（默认 43200） |
+| Router | `REDIS_URL` | ✓ | 同上 |
+| Router | `ROUTER_API_KEY` | ✓ 生产 | 管理员 API Key（调 Router 的最高权 key） |
+| Router | `HSE_URL` | 建议 | 引擎地址；不配则纯负载均衡 |
+| HSE | `REDIS_URL` | ✓ | 同上 |
+| Agent（平台自动配） | `NODE_ID` / `REDIS_URL` | 自动 | 纳管时由安装链路注入，无需手工 |
 
 ```bash
 # Redis（任一可达地址，生产建议独立部署）
@@ -129,6 +165,23 @@ curl http://<控制台IP>:9000/v1/chat/completions \
 ```
 
 响应中的 `instance` 字段告诉你请求实际落在哪个节点。
+
+### 2.5 首次部署验证清单
+
+逐项过，全绿才算部署完成：
+
+| # | 验证 | 命令/路径 | 期望 |
+|---|---|---|---|
+| 1 | Console 存活 | `curl http://<IP>:8080/api/healthz` | `{"ok":true,"version":"1.0.0"}` |
+| 2 | Router 存活 | `curl http://<IP>:9000/healthz` | `{"ok":true,"version":"1.0.0"}` |
+| 3 | HSE 存活 | `curl http://<IP>:9100/healthz` | `ok:true`，`license_ok` 视授权态 |
+| 4 | 登录 | UI 登录 admin | 进驾驶舱无红色错误条 |
+| 5 | 节点上线 | 节点管理页 | 卡片 online、GPU 信息正确 |
+| 6 | 服务启动 | 启动模型 → 事件流 | `svc ▸ ... 启动完成` |
+| 7 | 路由转发 | 发一条 chat 请求 | 200 + `instance` 落点字段 |
+| 8 | HSE 决策 | 建一条关键字规则再发请求 | 审计页回放出现命中记录 |
+| 9 | 授权 | 系统设置 → 授权 | 已激活 + 版本/能力位正确 |
+| 10 | 终端 | Web 终端连节点执行 `hostname` | 回显正确；`reboot` 被拦截 |
 
 ---
 
@@ -503,6 +556,60 @@ License 的 `max_nodes` 限制纳管节点数（0=不限）；超限时纳管/�
 | 429 QPS limit | 租户限流命中——升配额或降并发 |
 
 **日志位置**：Console/Router/HSE 容器 `docker logs <name>`；节点侧 Agent `docker logs hengshu-agent`；服务日志在节点卡片行内「日志」。
+
+### 15.1 日常巡检 SOP
+
+**每日**（2 分钟）：
+1. 驾驶舱：节点全 online、无 crashing 服务、授权横幅无红
+2. 事件流：过滤 ERR/WARN 过夜事件
+3. 平均 TTFT 与吞吐是否在基线区间
+
+**每周**（10 分钟）：
+1. 审计页：决策回放抽查（影子规则得分是否符合预期）
+2. 租户用量：TOKENS 列对账
+3. 磁盘：控制台录屏目录、节点模型目录水位
+4. License 到期日确认（订阅制提前 2 周续费）
+
+### 15.2 备份与恢复
+
+**需要备份的只有三样**：
+| 内容 | 位置 | 方法 |
+|---|---|---|
+| 全量状态（节点/规则/租户/license/会话） | Redis | `redis-cli --rdb /backup/hengshu-$(date +%F).rdb` 或 BGSAVE 拷走 dump.rdb |
+| 终端录屏 | `TERM_RECORD_DIR` | 直接目录拷贝 |
+| License 私钥 | 签发工具 `license_keys\` | **离线保险柜/UKey，不入任何服务器** |
+
+**恢复**：新 Redis 导入 rdb → 三件套指过来重启 → 全部状态回来（Console 无状态）。节点 Agent 不需重装（心跳自动续上）。
+
+### 15.3 升级 SOP
+
+1. 新版本 tar 放到 `INSTALL_TAR_DIR`（或新机器 docker load）
+2. 逐个替换组件容器（Console → Router → HSE，顺序无关，业务不中断：Router 最后换影响最小）
+3. **所有节点执行「重装」**（Agent 升级，新心跳字段生效）
+4. 浏览器 Ctrl+Shift+R 强刷控制台
+5. 跑一遍 §2.5 验证清单
+6. 更新本文档版本与截图（文档维护者）
+
+### 15.4 故障决策树
+
+```
+平台打不开？
+├─ 8080 不通 → Console 容器挂了 → docker logs hengshu-console
+├─ 能开但白屏 → 强刷；顶部红条看错误；还不行查 dist 是否最新
+└─ 能开没数据 → Redis 断（设置页 Redis 状态红）→ 恢复 Redis
+
+请求不通（9000）？
+├─ 401 → Key 问题（租户删了/管理员 Key 不对）
+├─ 429 → 租户限流
+├─ 503 no live instance → 节点离线或服务 stopped → 节点管理页看状态
+├─ 503 model has no live instance → 该模型服务没起/崩了 → 事件流看 crashing
+└─ 502 上游错 → 实例活着但 vllm 出错 → 节点卡片「日志」
+
+路由不按预期？
+├─ 规则没命中 → 审计页回放看 skipped 原因（能力位不够会明示）
+├─ 语义不工作 → 语义引擎状态/授权版本/阈值
+└─ 引擎整体不决策 → HSE 挂了会自动降级普通负载均衡（流量不受影响），查 :9100
+```
 
 ---
 
