@@ -6,7 +6,7 @@
 
 | 架构 | 基础镜像 | 产物 |
 |---|---|---|
-| x86_64 | pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime | `dist/image-server-x86_64.tar` |
+| x86_64 | docker.m.daocloud.io/pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime（docker.io 不通时走镜像站前缀） | `dist/image-server-x86_64.tar` |
 | aarch64（GB10/Jetson） | nvcr.io/nvidia/pytorch:25.09-py3（Blackwell 需 CUDA 12.8+） | `dist/image-server-aarch64.tar` |
 
 预装：fastapi / uvicorn / diffusers≥0.35 / transformers / accelerate / safetensors + wrapper（`/opt/hs-extra/server.py`）。
