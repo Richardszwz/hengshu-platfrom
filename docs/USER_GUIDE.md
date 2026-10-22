@@ -297,8 +297,12 @@ curl http://<控制台IP>:9000/v1/chat/completions \
 |---|---|---|
 | **LLM 对话**（默认） | 进对话路由池，`/v1/chat/completions` | Qwen/Llama 等生成模型（vllm/llama.cpp） |
 | **Embedding** | 进路由池，`/v1/embeddings` | bge-m3 等向量模型 |
-| **图像生成** | 独立图像池，`/v1/images/generations` | Qwen-Image/SD（ComfyUI、sd-forge 等 OpenAI 图像兼容框架） |
+| **图像生成** | 独立图像池，`/v1/images/generations` | Qwen-Image/SD（预置镜像 `hengshu/image-server`，环境已固化） |
 | **自定义框架** | **不进路由池**，仅纳管监控/启停/日志 | 任意自研 serving；流量直连节点端口 |
+
+**图像生成预置镜像**：`image-server-<arch>.tar`（diffusers 环境预装），启动命令只需一行
+`python /opt/hs-extra/server.py --model /models/<模型目录> --port {port}`——依赖不写在启动命令里
+（气隙环境无法 pip，且每次启动重复装依赖易失败）。详见 `extras/image_server/README.md`。
 
 ### 6.4 多机 TP 并行
 
