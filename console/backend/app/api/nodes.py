@@ -164,6 +164,7 @@ async def install_node(node_id: str, req: NodeAddReq, r=Depends(deps.get)) -> di
     # 纳管成功后自动预置平台自研镜像（image-server 等；失败不阻塞纳管）
     if result.get("ok", True):
         import asyncio
+
         from .images import auto_seed_node
         t = asyncio.create_task(auto_seed_node(r, node_id))
         _BG.add(t)

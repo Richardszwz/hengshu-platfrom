@@ -16,7 +16,7 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install -U pip
-          pip install -r router/requirements.txt pytest pytest-asyncio ruff
+          pip install -r router/requirements.txt pytest pytest-asyncio fakeredis ruff
       - name: Ruff
         run: ruff check router/app
       - name: Pytest
@@ -37,7 +37,7 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install -U pip
-          pip install -r console/backend/requirements.txt pytest pytest-asyncio httpx ruff
+          pip install -r console/backend/requirements.txt pytest pytest-asyncio fakeredis httpx ruff
       - name: Ruff
         run: ruff check console/backend/app
       - name: Pytest

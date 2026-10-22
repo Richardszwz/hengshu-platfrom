@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import json
 import tarfile
 import time
@@ -14,7 +13,6 @@ from pathlib import Path
 
 import httpx
 
-from . import deps
 from .config import settings
 
 
@@ -53,7 +51,7 @@ def _scan() -> dict[str, ImageEntry]:
                 arch = cfg.get("architecture", "")
                 for tag in mf[0].get("RepoTags", []):
                     out[tag] = ImageEntry(tar_path, tag, arch)
-        except Exception:  # noqa: BLE001  # 非镜像 tar（如 agent 包是镜像 tar，无关文件跳过）
+        except Exception:  # noqa: S112  # 非镜像 tar，无关文件跳过
             continue
     _cache, _cache_at = out, time.time()
     return out
@@ -135,7 +133,7 @@ async def push_image(r, node_id: str, image: str) -> dict:
                     if d.get("present"):
                         await _emit("OK", f"image ▸ {node_id} 已装载 {entry.tag}")
                         return {"ok": True, "tag": entry.tag, "node": node_id}
-                except Exception:  # noqa: BLE001
+                except Exception:  # noqa: S112  # 装载轮询，agent 未就绪时重试
                     continue
         raise RuntimeError(f"装载确认超时（{entry.tag} → {node_id}），看节点系统日志")
     finally:

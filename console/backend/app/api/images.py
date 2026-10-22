@@ -30,7 +30,7 @@ async def push(node_id: str, image: str, r=Depends(deps.get)) -> dict:
     async def _bg() -> None:
         try:
             await image_registry.push_image(r, node_id, image)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             pipe = r.pipeline()
             import json as _j
             pipe.rpush("hs:events", _j.dumps(
@@ -64,5 +64,5 @@ async def auto_seed_node(r, node_id: str) -> None:
     for e in seeds:
         try:
             await image_registry.push_image(r, node_id, e.tag)
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass  # 事件流已有记录
