@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 
 import fakeredis.aioredis
@@ -26,11 +27,13 @@ def client():
     asyncio.run(fake.hset("hs:user:admin", mapping={
         "password_hash": hash_password("x12345"), "role": "admin",
         "enabled": "1", "created": "1"}))
-    # 写操作挂基本 License 守卫：种一份开发私钥签发的有效 license
+    # 写操作挂基本 License 守卫：现场生成密钥对签发测试 license
+    # （不依赖 scripts/dev_keys——该目录 gitignored，CI 上不存在；
+    #   公钥经 HS_LICENSE_PUBKEY 环境变量注入，hslicense 验签时读取）
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
     from libs import hslicense as L
-    sk = (Path(__file__).resolve().parents[3] /
-          "scripts/dev_keys/license_private.pem").read_bytes()
+    sk, pk = L.gen_keypair()
+    os.environ["HS_LICENSE_PUBKEY"] = pk.decode()
     lic = L.sign_payload({
         "customer": "test", "fingerprint": L.cluster_fingerprint(),
         "base": {"mode": "perpetual", "max_nodes": 0, "expires": 0, "version_cap": "1.x"},
