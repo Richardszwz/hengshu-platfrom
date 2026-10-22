@@ -75,16 +75,9 @@
                 <button class="op danger" @click="remove(n)">删除</button>
               </td>
             </tr>
-            <!-- 展开：网卡 + 该节点的模型服务实例（监视 + 操作） -->
+            <!-- 展开：该节点的模型库 + 服务实例（监视 + 操作）；网卡清单移到「网络设置」对话框，不再铺满 -->
             <tr v-if="expanded.has(n.node_id)" class="svc-expand">
               <td colspan="7">
-                <div class="nic-row" v-if="n.nics?.length">
-                  <span class="nic-chip" :class="{ down: !nc.up, virt: nc.virtual }" v-for="nc in n.nics" :key="nc.name">
-                    {{ nc.name }} · {{ nc.ip || '未配IP' }}<template v-if="nc.speed"> · {{ nc.speed }}Mb</template>
-                  </span>
-                  <span class="dim" style="font-size:11px">网卡（红色=未启用，灰色=虚拟；配置在「网络设置」）</span>
-                </div>
-                <div class="nic-row dim" v-else style="font-size:11px">网卡信息采集中（每分钟刷新）…</div>
                 <div class="nic-row" v-if="(modelInv[n.node_id] || []).length">
                   <span class="nic-chip" v-for="mdl in modelInv[n.node_id]" :key="mdl">{{ mdl }}</span>
                   <span class="dim" style="font-size:11px">本机模型库（/models）</span>

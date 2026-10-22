@@ -12,10 +12,9 @@ ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 RUN pip install --no-cache-dir -i ${PIP_INDEX_URL} fastapi "uvicorn[standard]" \
     "diffusers>=0.35" transformers accelerate safetensors
 
-# NGC 容器预装的旧版 torchao 与 diffusers 0.41 冲突（FqnToConfig import 炸）：
-# Qwen-Image 推理不需要 torchao——升级失败则直接卸载
-RUN pip install --no-cache-dir -i ${PIP_INDEX_URL} -U torchao \
-    || pip uninstall -y torchao || true
+# NGC 容器预装的旧版 torchao（0.13+git 源码版）与 diffusers 0.41 冲突（FqnToConfig import 炸）：
+# pip 升级拿不到 ≥0.14 的 arm64 wheel——推理不需要 torchao，直接卸载
+RUN pip uninstall -y torchao || true
 
 COPY extras/image_server/server.py /opt/hs-extra/server.py
 
