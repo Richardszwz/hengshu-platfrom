@@ -41,7 +41,13 @@ jobs:
       - name: Ruff
         run: ruff check console/backend/app
       - name: Pytest
-        run: python -m pytest console/backend/tests -q
+        run: |
+          set -o pipefail
+          python -m pytest console/backend/tests -q --tb=short 2>&1 | tee pytest.out || {
+            grep -E "^(FAILED|ERROR)" pytest.out | head -20 | while IFS= read -r l; do echo "::error::$l"; done
+            { echo "### Pytest 失败摘要"; echo '```'; tail -30 pytest.out; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
         env:
           REDIS_URL: redis://localhost:6379/0
           ADMIN_PASSWORD_HASH: ${{ secrets.CI_ADMIN_HASH }}
