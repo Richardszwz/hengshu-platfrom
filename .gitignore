@@ -33,3 +33,6 @@ recordings/
 dist/
 .dev-console.log
 scripts/dev_keys/
+
+# Office 锁文件
+~$*
