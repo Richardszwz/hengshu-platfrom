@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import base64
 import io
+import os
 import time
 
 import torch
@@ -23,6 +24,26 @@ from pydantic import BaseModel
 app = FastAPI(title="hengshu-image-server")
 _pipe = None
 _device = "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def _load(model_path: str) -> None:
+    global _pipe
+    try:
+        from diffusers import QwenImagePipeline
+    except Exception as e:  # noqa: BLE001
+        raise RuntimeError(
+            f"diffusers 管线不可用（镜像依赖冲突，联系平台更新 image-server 镜像）: "
+            f"{type(e).__name__} {e}") from e
+    if not os.path.exists(os.path.join(model_path, "model_index.json")):
+        raise RuntimeError(
+            f"{model_path} 不是 diffusers 格式（缺 model_index.json）——"
+            f"确认模型来源为 Qwen/Qwen-Image 官方仓库结构")
+    _pipe = QwenImagePipeline.from_pretrained(model_path, torch_dtype=torch.bfloat16)
+    _pipe.to(_device)
+    try:
+        _pipe.enable_attention_slicing()   # 显存紧张时切片注意力
+    except Exception:
+        pass
 
 
 class ImageReq(BaseModel):
@@ -39,17 +60,6 @@ class ImageReq(BaseModel):
 @app.get("/health")
 def health() -> dict:
     return {"ok": _pipe is not None, "device": _device}
-
-
-def _load(model_path: str) -> None:
-    global _pipe
-    from diffusers import QwenImagePipeline
-    _pipe = QwenImagePipeline.from_pretrained(model_path, torch_dtype=torch.bfloat16)
-    _pipe.to(_device)
-    try:
-        _pipe.enable_attention_slicing()   # 显存紧张时切片注意力
-    except Exception:
-        pass
 
 
 @app.post("/v1/images/generations")

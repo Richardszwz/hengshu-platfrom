@@ -272,3 +272,13 @@ body::after {
   .nodes { grid-template-columns: repeat(2, 1fr); }
   .grid-a, .grid-b { grid-template-columns: 1fr; }
 }
+
+/* 原生 select 深色适配：option 弹层在 Windows 下用系统白底，继承的浅色文字会看不见 */
+select, select option {
+  background-color: #0d2233;
+  color: #d8e6f3;
+}
+select option:hover, select option:checked {
+  background-color: #1a3a52;
+  color: #ffffff;
+}
