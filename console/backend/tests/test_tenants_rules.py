@@ -7,11 +7,9 @@ import sys
 
 import fakeredis.aioredis
 import pytest
-from fastapi.testclient import TestClient
-
 from app import deps
 from app.main import app
-from app.security import current_user
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture()
@@ -140,6 +138,7 @@ def test_remove_online_node_sends_tombstone(client) -> None:
 def test_reinstall_fallback_conn_and_cred(client, monkeypatch) -> None:
     """重装捷径：空 hostname+空密码 → 回退 hs:conn 连接信息 + hs:cred 解密凭证。"""
     import asyncio
+
     import app.ssh_installer as si
     from app.crypto import encrypt
 
@@ -157,7 +156,7 @@ def test_reinstall_fallback_conn_and_cred(client, monkeypatch) -> None:
     r = client.post("/api/nodes/S1/install", json={"node_id": "S1"})
     assert r.status_code == 200
     assert captured["host"] == "10.0.0.9" and captured["username"] == "dgx"
-    assert captured["password"] == "secret-pw"
+    assert captured["password"] == "secret-pw"  # noqa: S105  # 测试断言固定串
 
     # 无存档节点 → 400 明确指引
     r2 = client.post("/api/nodes/NOPE/install", json={"node_id": "NOPE"})
@@ -258,7 +257,7 @@ def test_node_logs_endpoint(client) -> None:
     r = client.get("/api/nodes/X86-9/logs")
     assert r.status_code == 200
     lines = r.json()["lines"]
-    assert [l["msg"] for l in lines] == ["完成", "受理"]  # 新→旧
+    assert [ln["msg"] for ln in lines] == ["完成", "受理"]  # 新→旧
     assert client.get("/api/nodes/none/logs").json()["lines"] == []
 
 
@@ -282,6 +281,7 @@ def test_delete_service_clears_registry(client) -> None:
 def test_update_conn(client) -> None:
     """改连接：更新 hs:conn + 可选换凭证；未登记 404；留空密码不动旧凭证。"""
     import asyncio
+
     from app.crypto import decrypt, encrypt
     fake = app.dependency_overrides[deps.get]()
     asyncio.run(fake.hset("hs:conn:N1", mapping={"host": "1.1.1.1", "port": "22", "username": "old"}))

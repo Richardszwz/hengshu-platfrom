@@ -1,8 +1,7 @@
 """ServiceCtl docker 后端 argv 构造测试（mock _run 捕获命令行）。"""
 import pytest
-
 from app import service_ctl
-from app.service_ctl import StartRequest, ServiceCtl, start_docker, stop_docker, logs_docker
+from app.service_ctl import ServiceCtl, StartRequest, logs_docker, start_docker, stop_docker
 
 
 @pytest.fixture

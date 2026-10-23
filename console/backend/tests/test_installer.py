@@ -3,7 +3,6 @@ import asyncio
 
 import fakeredis.aioredis
 import pytest
-
 from app import ssh_installer
 
 
@@ -58,6 +57,7 @@ def test_install_invalid_pem_graceful():
 def test_detect_docker_sudo_fallback():
     """docker 直连失败 → sudo -n 回退；两者都失败 → 空前缀。"""
     import asyncio
+
     from app import ssh_installer
 
     class R:

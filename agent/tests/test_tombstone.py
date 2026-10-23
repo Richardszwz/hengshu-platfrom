@@ -3,7 +3,6 @@ import asyncio
 
 import fakeredis.aioredis
 import pytest
-
 from app import main
 
 

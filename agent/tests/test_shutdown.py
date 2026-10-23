@@ -1,9 +1,8 @@
 """Agent /shutdown：响应 stopping，自杀任务走 docker rm -f（防 restart 拉起）。"""
 import asyncio
 
-from fastapi.testclient import TestClient
-
 from app import main
+from fastapi.testclient import TestClient
 
 
 def test_shutdown_endpoint(monkeypatch):
@@ -133,7 +132,7 @@ def test_heartbeat_ttl_is_int():
     """回归：心跳 TTL 必须 int（redis EXPIRE 拒浮点，曾导致整条 pipeline 失败丢注册）。"""
     from app import main as m
     assert isinstance(int(m.settings.heartbeat_interval * 5), int)
-    import inspect, re
+    import inspect
     src = inspect.getsource(m.heartbeat_loop)
     assert "int(settings.heartbeat_interval" in src
 

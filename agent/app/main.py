@@ -18,7 +18,7 @@ import uuid
 
 import redis.asyncio as aioredis
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
 from . import netinfo, rayctl, service_ctl
@@ -522,7 +522,7 @@ async def images_load(request: Request, size: int = 0, tag: str = "") -> dict:
     注意：请求体必须在 handler 返回前读完——受理制（先返回再读流）在 FastAPI 下行不通
     （handler 返回即关连接，后台读 stream 必炸）。上传耗时=传输时间，调用方按 GB 级设超时。
     """
-    tmp = f"/tmp/hengshu-img/hs-image-{int(time.time())}-{uuid.uuid4().hex[:6]}.tar"
+    tmp = f"/tmp/hengshu-img/hs-image-{int(time.time())}-{uuid.uuid4().hex[:6]}.tar"  # noqa: S108  # 容器内固定共享目录（宿主挂载点），非随机 tmp 滥用
     written = 0
     await _push_event("INFO", f"image ▸ 开始接收镜像 tar（{size / 2**30:.1f} GiB 声明）→ {tmp}")
     try:
@@ -530,13 +530,13 @@ async def images_load(request: Request, size: int = 0, tag: str = "") -> dict:
             async for chunk in request.stream():
                 f.write(chunk)
                 written += len(chunk)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         try:
             os.remove(tmp)
         except OSError:
             pass
         await _push_event("ERR", f"image ▸ 接收中断: {type(e).__name__} {e}")
-        raise HTTPException(502, f"接收中断: {type(e).__name__}")
+        raise HTTPException(502, f"接收中断: {type(e).__name__}") from e
     if size and written != size:
         try:
             os.remove(tmp)
@@ -551,10 +551,10 @@ async def images_load(request: Request, size: int = 0, tag: str = "") -> dict:
             rc, out = await service_ctl._run(["docker", "load", "-i", tmp], timeout=1800)
             if rc != 0:
                 raise RuntimeError(f"docker load 失败: {out[-300:]}")
-            loaded = [l.split(":")[-2].strip() + ":" + l.split(":")[-1].strip()
-                      for l in out.splitlines() if "Loaded image" in l]
+            loaded = [ln.split(":")[-2].strip() + ":" + ln.split(":")[-1].strip()
+                      for ln in out.splitlines() if "Loaded image" in ln]
             await _push_event("OK", f"image ▸ 装载完成: {', '.join(loaded) or out[-120:]}")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             await _push_event("ERR", f"image ▸ 装载失败: {type(e).__name__} {e}")
         finally:
             try:
