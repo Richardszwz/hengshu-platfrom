@@ -46,7 +46,8 @@ curl {{ apiBase }}/chat/completions \
         <span class="sub">API Key 限流与用量隔离（P2 实装限流执行；当前 Key 仅创建时展示一次）</span>
       </div>
       <form class="t-form" @submit.prevent="create">
-        <input v-model.trim="newId" class="inp" placeholder="租户标识（小写字母/数字/-_）" required />
+        <input v-model.trim="newId" class="inp" placeholder="租户标识（小写字母/数字/-_，自动转小写）"
+               required @input="newId = newId.toLowerCase()" />
         <input v-model.number="newQps" class="inp qps" type="number" min="1" max="10000" placeholder="QPS 上限" />
         <input v-model.trim="newAllowed" class="inp" placeholder="模型白名单（ENT，逗号分隔；空=不限）" />
         <button class="btn btn-cyan" type="submit">创建租户</button>
@@ -120,7 +121,15 @@ async function create() {
     createdKey.value = d.api_key; createdId.value = d.tenant_id
     newId.value = ''; newAllowed.value = ''
     await load()
-  } catch (e: any) { error.value = e?.response?.data?.detail || '创建失败' }
+  } catch (e: any) {
+    const d = e?.response?.data?.detail
+    // pydantic 422 返回数组——提取可读原因转中文
+    if (Array.isArray(d) && d[0]?.type === 'string_pattern_mismatch') {
+      error.value = '租户标识格式不对：小写字母/数字开头，可含 - _，2~32 位（大写已自动转换）'
+    } else {
+      error.value = typeof d === 'string' ? d : '创建失败'
+    }
+  }
 }
 async function del(id: string) {
   if (!confirm(`删除租户 ${id}？其 API Key 将立即失效`)) return
