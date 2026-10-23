@@ -1,6 +1,6 @@
 [project]
 name = "hengshu"
-version = "1.0.0"
+version = "1.0.1"
 description = "衡枢 HENGSHU —— 多机推理 API 负载均衡平台 + HSE 智能路由引擎"
 requires-python = ">=3.11"
 
