@@ -88,14 +88,16 @@ class Registry:
         return [i for i in out if i.alive and i.kind in kinds]
 
     async def image_instances(self, model: str = "") -> list[Instance]:
-        """图像生成服务活实例（/v1/images/generations 路由池）。"""
+        """图像生成服务活实例（/v1/images/generations 路由池）。
+        model 为空/auto/* = 不指定（全池负载选择），与 chat 路由语义一致。"""
         keys = await self.r.keys(f"{INST_PREFIX}*")
         out: list[Instance] = []
+        want = model if model not in ("", "auto", "*") else ""
         for k in keys:
             h = await self.r.hgetall(k)
             if not h or h.get("kind") != "image":
                 continue
-            if model and h.get("model") != model:
+            if want and h.get("model") != want:
                 continue
             iid = k.removeprefix(INST_PREFIX)
             node_id, _, port = iid.partition(":")

@@ -43,6 +43,9 @@ def test_kind_pool_separation():
         imgs = await reg.image_instances()
         assert [i.inst_id for i in imgs] == ["N2:8200"]
         assert [i.inst_id for i in await reg.image_instances("Qwen-Image")] == ["N2:8200"]
+        # auto/*/空 同义：不指定模型 → 全图像池（workbuddy 填 auto 也必须路由）
+        assert [i.inst_id for i in await reg.image_instances("auto")] == ["N2:8200"]
+        assert [i.inst_id for i in await reg.image_instances("*")] == ["N2:8200"]
         assert await reg.image_instances("no-such") == []
     asyncio.run(go())
 

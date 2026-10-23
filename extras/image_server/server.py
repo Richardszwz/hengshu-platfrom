@@ -28,19 +28,27 @@ _device = "cuda" if torch.cuda.is_available() else "cpu"
 
 def _load(model_path: str) -> None:
     global _pipe
-    try:
-        from diffusers import AutoPipelineForText2Image
-    except Exception as e:  # noqa: BLE001
-        raise RuntimeError(
-            f"diffusers 管线不可用（镜像依赖冲突，联系平台更新 image-server 镜像）: "
-            f"{type(e).__name__} {e}") from e
-    if not os.path.exists(os.path.join(model_path, "model_index.json")):
+    import json
+
+    import diffusers
+    idx_path = os.path.join(model_path, "model_index.json")
+    if not os.path.exists(idx_path):
         raise RuntimeError(
             f"{model_path} 不是 diffusers 格式（缺 model_index.json）——"
             f"确认模型来源为 Qwen/Qwen-Image 官方仓库结构")
-    # AutoPipeline 按模型 model_index.json 自述的 _class_name 加载——
-    # QwenImagePipeline（1.x）/ QwenImage21Pipeline（2.1）通吃，不写死类名
-    _pipe = AutoPipelineForText2Image.from_pretrained(model_path, torch_dtype=torch.bfloat16)
+    # 按模型自述的 _class_name 动态加载（S3 真机实测：Qwen-Image-2.1 的
+    # QwenImage21Pipeline 未注册进 AutoPipeline 映射表，AutoPipeline 会报
+    # "can't find a pipeline linked to..."；getattr 动态加载 1.x/2.1/未来版本通吃）
+    cls_name = json.load(open(idx_path)).get("_class_name", "")
+    cls = getattr(diffusers, cls_name, None)
+    if cls is None:
+        raise RuntimeError(
+            f"diffusers {diffusers.__version__} 不认识管线类 {cls_name}——"
+            f"模型过新需升级镜像 diffusers 版本")
+    try:
+        _pipe = cls.from_pretrained(model_path, torch_dtype=torch.bfloat16)
+    except Exception as e:
+        raise RuntimeError(f"模型加载失败（{cls_name}）: {type(e).__name__} {e}") from e
     _pipe.to(_device)
     try:
         _pipe.enable_attention_slicing()   # 显存紧张时切片注意力
