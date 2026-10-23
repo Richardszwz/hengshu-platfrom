@@ -267,16 +267,8 @@ async def hse_decide(messages: list[dict]) -> tuple[str | None, str | None]:
         return None, None  # 引擎失联/超时 → 默认池（fail-open）
 
 
-async def _chat_image_bridge(req: ChatReq, model: str, img_pool: list, ctx: dict) -> Response:
-    """chat→image 桥接：对话请求被规则路由到图像模型 → 出图，以 chat completion 格式返回。
-
-    prompt 取最后一条 user 消息文本；图片以 markdown data-URI 内联（前端直接渲染）。
-    """
-    last_user = next((m for m in reversed(req.messages) if m.get("role") == "user"), None)
-    prompt = _msg_text(last_user.get("content")) if last_user else ""
-    if not prompt.strip():
-        raise HTTPException(400, "图像生成桥接需要非空 user 提示词")
-    inst = pick(img_pool, None)
+async def _bridge_fetch(inst, model: str, prompt: str) -> str:
+    """调图像实例出图，返回 content（markdown 内联图）。失败抛 HTTPException。"""
     try:
         async with httpx.AsyncClient(timeout=settings.upstream_timeout, trust_env=False) as c:
             resp = await c.post(f"{inst.url}/v1/images/generations",
@@ -287,24 +279,58 @@ async def _chat_image_bridge(req: ChatReq, model: str, img_pool: list, ctx: dict
     data = body.get("data") or []
     if resp.status_code != 200 or not data or not data[0].get("b64_json"):
         raise HTTPException(502, f"image bridge upstream {inst.inst_id}: HTTP {resp.status_code} {str(body)[:200]}")
-    content = f"![{prompt[:60]}](data:image/png;base64,{data[0]['b64_json']})"
-    await redis().incr(STAT_REQ_KEY)
+    return f"![{prompt[:60]}](data:image/png;base64,{data[0]['b64_json']})"
+
+
+async def _bridge_stream(inst, model: str, prompt: str):
+    """流式桥接：出图等待期每 15s 发 SSE 心跳注释行（防流式前端空闲超时
+    「已取消」——workbuddy 实测 1m28s 零输出被取消），完成后单 chunk 全量图 + stop + DONE。"""
+    import asyncio as _aio
+
     msg_id = f"chatcmpl-img-{uuid.uuid4().hex[:12]}"
     created = int(time.time())
+    task = _aio.create_task(_bridge_fetch(inst, model, prompt))
+    while not task.done():
+        try:
+            await _aio.wait_for(_aio.shield(task), timeout=15)
+        except TimeoutError:
+            yield ": keepalive\n\n"   # SSE 注释行：客户端忽略内容但连接保持活跃
+    try:
+        content = task.result()
+    except HTTPException as e:
+        err = {"error": {"message": e.detail, "code": e.status_code}}
+        yield f"data: {json.dumps(err, ensure_ascii=False)}\n\ndata: [DONE]\n\n"
+        return
+    await redis().incr(STAT_REQ_KEY)
+    chunk1 = {"id": msg_id, "object": "chat.completion.chunk", "created": created,
+              "model": model,
+              "choices": [{"index": 0, "delta": {"role": "assistant", "content": content},
+                           "finish_reason": None}]}
+    chunk2 = {"id": msg_id, "object": "chat.completion.chunk", "created": created,
+              "model": model,
+              "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+              "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}}
+    yield f"data: {json.dumps(chunk1, ensure_ascii=False)}\n\n"
+    yield f"data: {json.dumps(chunk2, ensure_ascii=False)}\n\ndata: [DONE]\n\n"
+
+
+async def _chat_image_bridge(req: ChatReq, model: str, img_pool: list, ctx: dict) -> Response:
+    """chat→image 桥接：对话请求被规则路由到图像模型 → 出图，以 chat completion 格式返回。
+
+    prompt 取最后一条 user 消息文本；图片以 markdown data-URI 内联（前端直接渲染）。
+    stream=true 时返回 SSE（含出图等待期心跳）。
+    """
+    last_user = next((m for m in reversed(req.messages) if m.get("role") == "user"), None)
+    prompt = _msg_text(last_user.get("content")) if last_user else ""
+    if not prompt.strip():
+        raise HTTPException(400, "图像生成桥接需要非空 user 提示词")
+    inst = pick(img_pool, None)
     if req.stream:
-        # 流式客户端（多数 OpenAI 前端默认 stream=true）：SSE 单 chunk 全量内容 + stop + DONE
-        chunk1 = {"id": msg_id, "object": "chat.completion.chunk", "created": created,
-                  "model": model,
-                  "choices": [{"index": 0, "delta": {"role": "assistant", "content": content},
-                               "finish_reason": None}]}
-        chunk2 = {"id": msg_id, "object": "chat.completion.chunk", "created": created,
-                  "model": model,
-                  "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-                  "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}}
-        sse = (f"data: {json.dumps(chunk1, ensure_ascii=False)}\n\n"
-               f"data: {json.dumps(chunk2, ensure_ascii=False)}\n\ndata: [DONE]\n\n")
-        return Response(sse, media_type="text/event-stream",
-                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+        return StreamingResponse(_bridge_stream(inst, model, prompt),
+                                 media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    content = await _bridge_fetch(inst, model, prompt)
+    await redis().incr(STAT_REQ_KEY)
     return JSONResponse({
         "id": f"chatcmpl-img-{uuid.uuid4().hex[:12]}",
         "object": "chat.completion",
