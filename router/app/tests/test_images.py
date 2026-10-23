@@ -59,8 +59,11 @@ def test_images_endpoint_route(monkeypatch):
     _seed(r)
     asyncio.run(r.hset("hs:tokens", "k1", "t1"))
     asyncio.run(r.hset("hs:tenant:t1", mapping={"name": "t1", "qps_limit": "0", "allowed_models": ""}))
+    # 图像路由为 PRO/ENT 能力：种 PRO license（router 只读不验签，console 激活时已验）
+    asyncio.run(r.set("hs:license:file", json.dumps({"engine": {"edition": "PRO", "caps": []}})))
     m._redis = r
     m.registry = Registry(r)
+    m._caps_cache = (0.0, set())   # 清 60s 能力缓存，防跨测试污染
 
     class _Resp:
         status_code = 200
@@ -99,8 +102,10 @@ def test_images_403_when_whitelist_excludes(monkeypatch):
     asyncio.run(r.hset("hs:tokens", "k1", "t1"))
     asyncio.run(r.hset("hs:tenant:t1", mapping={
         "name": "t1", "qps_limit": "0", "allowed_models": "Qwen3-8B"}))
+    asyncio.run(r.set("hs:license:file", json.dumps({"engine": {"edition": "PRO", "caps": []}})))
     m._redis = r
     m.registry = Registry(r)
+    m._caps_cache = (0.0, set())
 
     async def go():
         await m.images(m.ImageReq(model="Qwen-Image", prompt="x"),
@@ -108,3 +113,27 @@ def test_images_403_when_whitelist_excludes(monkeypatch):
     with pytest.raises(HTTPException) as ei:
         asyncio.run(go())
     assert ei.value.status_code == 503  # 白名单过滤后无图像实例
+
+
+def test_images_403_on_std_license(monkeypatch):
+    """STD 档位：图像路由端点直接 403（图像路由为 PRO/ENT 能力）。"""
+    from fastapi import HTTPException
+
+    import app.main as m
+    from app.registry import Registry
+
+    r = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    _seed(r)
+    asyncio.run(r.hset("hs:tokens", "k1", "t1"))
+    asyncio.run(r.hset("hs:tenant:t1", mapping={"name": "t1", "qps_limit": "0", "allowed_models": ""}))
+    asyncio.run(r.set("hs:license:file", json.dumps({"engine": {"edition": "STD", "caps": []}})))
+    m._redis = r
+    m.registry = Registry(r)
+    m._caps_cache = (0.0, set())
+
+    async def go():
+        await m.images(m.ImageReq(model="auto", prompt="x"), {"token": "k1", "checked": False})
+    with pytest.raises(HTTPException) as ei:
+        asyncio.run(go())
+    assert ei.value.status_code == 403
+    assert "PRO/ENT" in ei.value.detail

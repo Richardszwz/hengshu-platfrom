@@ -126,6 +126,23 @@ async def _engine_caps() -> set[str]:
     return caps
 
 
+async def _engine_edition() -> str:
+    """当前引擎档位（STD/PRO/ENT；无 license 视为 STD）。"""
+    try:
+        raw = await redis().get("hs:license:file")
+        return ((json.loads(raw).get("engine") or {}).get("edition") or "STD") if raw else "STD"
+    except Exception:
+        return "STD"
+
+
+async def _has_image_route() -> bool:
+    """图像路由（/v1/images/* + chat→image 桥接）= PRO/ENT 能力。
+    按 edition 兜底——已签发旧证的 caps 快照无 image_route 位，档位语义兼容。"""
+    if "image_route" in await _engine_caps():
+        return True
+    return await _engine_edition() in ("PRO", "ENT")
+
+
 def _prefix_hash(messages: list[dict]) -> str:
     """前缀指纹：首条消息前 64 字符 sha1——同前缀请求大概率共享 KV cache block。"""
     if not messages:
@@ -163,6 +180,9 @@ class ImageReq(BaseModel):
 @app.post("/v1/images/generations")
 async def images(req: ImageReq, ctx: dict = Depends(auth)) -> Response:
     ctx = await auth_tenant(ctx)
+    # 图像路由为 PRO/ENT 能力（STD 只做对话类路由）
+    if not await _has_image_route():
+        raise HTTPException(403, "图像生成路由为 PRO/ENT 引擎能力（当前 STD）——升级 License 后开通")
     if ctx["qps_limit"] > 0 and not await _rate_ok(ctx["tid"], ctx["qps_limit"]):
         raise HTTPException(429, f"tenant '{ctx['tenant']}' QPS limit exceeded ({ctx['qps_limit']}/s)")
     pool = await registry.image_instances(req.model)
@@ -247,6 +267,40 @@ async def hse_decide(messages: list[dict]) -> tuple[str | None, str | None]:
         return None, None  # 引擎失联/超时 → 默认池（fail-open）
 
 
+async def _chat_image_bridge(req: ChatReq, model: str, img_pool: list, ctx: dict) -> Response:
+    """chat→image 桥接：对话请求被规则路由到图像模型 → 出图，以 chat completion 格式返回。
+
+    prompt 取最后一条 user 消息文本；图片以 markdown data-URI 内联（前端直接渲染）。
+    """
+    last_user = next((m for m in reversed(req.messages) if m.get("role") == "user"), None)
+    prompt = _msg_text(last_user.get("content")) if last_user else ""
+    if not prompt.strip():
+        raise HTTPException(400, "图像生成桥接需要非空 user 提示词")
+    inst = pick(img_pool, None)
+    try:
+        async with httpx.AsyncClient(timeout=settings.upstream_timeout, trust_env=False) as c:
+            resp = await c.post(f"{inst.url}/v1/images/generations",
+                                json={"model": model, "prompt": prompt})
+        body = resp.json()
+    except (httpx.HTTPError, json.JSONDecodeError, OSError) as e:
+        raise HTTPException(502, f"image bridge upstream {inst.inst_id}: {type(e).__name__} {e}") from e
+    data = body.get("data") or []
+    if resp.status_code != 200 or not data or not data[0].get("b64_json"):
+        raise HTTPException(502, f"image bridge upstream {inst.inst_id}: HTTP {resp.status_code} {str(body)[:200]}")
+    content = f"![{prompt[:60]}](data:image/png;base64,{data[0]['b64_json']})"
+    await redis().incr(STAT_REQ_KEY)
+    return JSONResponse({
+        "id": f"chatcmpl-img-{uuid.uuid4().hex[:12]}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": model,
+        "instance": inst.inst_id,
+        "choices": [{"index": 0, "finish_reason": "stop",
+                     "message": {"role": "assistant", "content": content}}],
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+    })
+
+
 @app.post("/v1/chat/completions")
 async def chat(req: ChatReq, x_session_id: str | None = Header(default=None),
                x_type: str | None = Header(default=None),
@@ -284,6 +338,21 @@ async def chat(req: ChatReq, x_session_id: str | None = Header(default=None),
                                      + (f" (type '{rule_type}' 无规则映射)" if rule_type else ""))
     else:
         candidates = await registry.candidates(model)
+        # chat→image 桥接：规则/引擎把对话路由到「仅 image 实例」的模型 →
+        # 直接调图像服务出图，以 chat completion 格式返回（markdown 内联图）。
+        # 解决「关键词规则命中 Qwen-Image 但 image kind 不在对话池 → 回退被 chat 模型接住」
+        if not candidates:
+            img_pool = await registry.image_instances(model)
+            if img_pool and not await _has_image_route():
+                # STD：客户意图明确是图像模型 → 清晰 403，不静默回退 chat 池
+                raise HTTPException(403, f"规则路由目标 '{model}' 是图像服务；图像路由为 "
+                                         f"PRO/ENT 引擎能力（当前 STD）——升级 License 后开通")
+            if img_pool:
+                allowed0 = ctx.get("allowed_models") or set()
+                if allowed0:
+                    img_pool = [c for c in img_pool if c.model in allowed0]
+                if img_pool:
+                    return await _chat_image_bridge(req, model, img_pool, ctx)
         # HSE 指定的模型无在线实例 → 回退全池（引擎决策是建议不是命令）
         if not candidates and decided:
             candidates = await registry.all_instances()
