@@ -12,16 +12,19 @@ ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 RUN pip install --no-cache-dir -i ${PIP_INDEX_URL} fastapi "uvicorn[standard]" \
     "diffusers>=0.35" transformers accelerate safetensors
 
-# NGC 容器预装的旧版 torchao（0.13+git 源码版）与 diffusers 0.41 冲突（FqnToConfig import 炸）：
-# pip 升级拿不到 ≥0.14 的 arm64 wheel——推理不需要 torchao，直接卸载
-RUN pip uninstall -y torchao || true
+# NGC 容器预装的训练/微调生态包与 diffusers 0.41 import 链冲突（推理用不到，全卸）：
+# - torchao 0.13+git：FqnToConfig 缺失炸 lora_pipeline
+# - peft 旧版：ScalingType 从 torch.nn.functional import 不到，炸 auto_pipeline
+RUN pip uninstall -y torchao peft || true
 
 COPY extras/image_server/server.py /opt/hs-extra/server.py
 
 # 构建期自检（目标架构下真跑，QEMU 慢但可靠）：wrapper 与管线必须能 import，
-# 挂了构建直接失败——坏镜像不出构建管线（torchao 类预装冲突在此现形）
+# 挂了构建直接失败——坏镜像不出构建管线（torchao/peft 类预装冲突在此现形）
 RUN python -c "import fastapi, uvicorn, torch, diffusers, transformers; \
-    from diffusers import QwenImagePipeline; import sys; sys.path.insert(0, '/opt/hs-extra'); \
+    from diffusers import AutoPipelineForText2Image, QwenImagePipeline; \
+    import diffusers; assert hasattr(diffusers, 'QwenImage21Pipeline'), 'diffusers 无 QwenImage21Pipeline（2.1 模型需要）'; \
+    import sys; sys.path.insert(0, '/opt/hs-extra'); \
     import server; print('image-server selfcheck OK', torch.__version__, diffusers.__version__)"
 
 EXPOSE 8100

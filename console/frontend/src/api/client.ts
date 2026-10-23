@@ -46,6 +46,7 @@ export const api = {
   netTest: (payload: object) => axios.post('/api/nodes/net-test', payload).then(r => r.data),
   sshMesh: (payload: object) => axios.post('/api/nodes/ssh-mesh', payload).then(r => r.data),
   ncclEnv: (nodeId: string) => axios.post(`/api/nodes/${nodeId}/nccl-env`).then(r => r.data),
+  restartDocker: (nodeId: string) => axios.post(`/api/nodes/${nodeId}/docker/restart`).then(r => r.data),
   setNic: (nodeId: string, payload: object) =>
     axios.post(`/api/nodes/${nodeId}/nic`, payload).then(r => r.data),
   removeNode: (nodeId: string) => axios.delete(`/api/nodes/${nodeId}`).then(r => r.data),

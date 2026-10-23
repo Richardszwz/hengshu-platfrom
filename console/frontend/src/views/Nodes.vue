@@ -71,6 +71,7 @@
                 </button>
                 <button v-if="n.status === 'online'" class="op warn" @click="stopAgent(n)">停止Agent</button>
                 <button v-if="n.status === 'online'" class="op" @click="openNet(n)">网络设置</button>
+                <button v-if="n.status === 'online'" class="op warn" @click="restartDocker(n)">重启Docker</button>
                 <button class="op" @click="openConn(n)">改连接</button>
                 <button class="op danger" @click="remove(n)">删除</button>
               </td>
@@ -428,13 +429,25 @@ async function submit(install: boolean) {
 }
 
 async function remove(n: any) {
-  if (!confirm(`删除节点 ${n.node_id}？${n.status === 'online' ? '在线节点将收到自杀墓碑，Agent 自停后不再出现' : ''}`)) return
+  if (!confirm(`删除节点 ${n.node_id}？\n将 SSH 到真机清理所有 hengshu 相关容器（hs-*/hengshu-*）与数据卷，还原真机状态；离线节点清理会失败并在事件流提示，需人工检查。`)) return
   try {
     const d = await api.removeNode(n.node_id)
-    if (d.agent_notified) alert(d.msg)
+    const cleaned = d.cleanup?.cleaned?.length ? `已清理容器：${d.cleanup.cleaned.join('、')}` : ''
+    const errs = d.cleanup?.errors?.length ? `\n⚠ 清理异常：${d.cleanup.errors.join('；')}` : ''
+    alert(`${d.msg}${cleaned ? '\n' + cleaned : ''}${errs}`)
   } catch (e: any) {
     const msg = e?.response?.data?.detail || e?.message || '删除失败'
     alert(msg)
+  }
+  refresh()
+}
+
+async function restartDocker(n: any) {
+  if (!confirm(`重启 ${n.node_id} 的 Docker 守护进程？\n该节点上所有容器（含模型服务与 Agent）将短暂中断，带重启策略的容器会自动回场。`)) return
+  try {
+    await api.restartDocker(n.node_id)
+  } catch (e: any) {
+    alert(e?.response?.data?.detail || e?.message || '重启指令下发失败')
   }
   refresh()
 }

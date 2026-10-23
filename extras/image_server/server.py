@@ -29,7 +29,7 @@ _device = "cuda" if torch.cuda.is_available() else "cpu"
 def _load(model_path: str) -> None:
     global _pipe
     try:
-        from diffusers import QwenImagePipeline
+        from diffusers import AutoPipelineForText2Image
     except Exception as e:  # noqa: BLE001
         raise RuntimeError(
             f"diffusers 管线不可用（镜像依赖冲突，联系平台更新 image-server 镜像）: "
@@ -38,7 +38,9 @@ def _load(model_path: str) -> None:
         raise RuntimeError(
             f"{model_path} 不是 diffusers 格式（缺 model_index.json）——"
             f"确认模型来源为 Qwen/Qwen-Image 官方仓库结构")
-    _pipe = QwenImagePipeline.from_pretrained(model_path, torch_dtype=torch.bfloat16)
+    # AutoPipeline 按模型 model_index.json 自述的 _class_name 加载——
+    # QwenImagePipeline（1.x）/ QwenImage21Pipeline（2.1）通吃，不写死类名
+    _pipe = AutoPipelineForText2Image.from_pretrained(model_path, torch_dtype=torch.bfloat16)
     _pipe.to(_device)
     try:
         _pipe.enable_attention_slicing()   # 显存紧张时切片注意力

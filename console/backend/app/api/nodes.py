@@ -211,11 +211,93 @@ async def stop_agent(node_id: str, r=Depends(deps.get)) -> dict:
     return {"node_id": node_id, **out}
 
 
+# ---------------- 节点真机运维（SSH 直连，不依赖 Agent 在线） ----------------
+
+async def _evt(r, level: str, msg: str) -> None:
+    """事件流（驾驶舱/事件页可见）。"""
+    pipe = r.pipeline()
+    pipe.rpush("hs:events", json.dumps(
+        {"ts": round(time.time(), 3), "level": level, "msg": msg}, ensure_ascii=False))
+    pipe.ltrim("hs:events", -500, -1)
+    await pipe.execute()
+
+
+async def _ssh_connect(r, node_id: str):
+    """从 hs:conn + hs:cred 解密凭证建立 SSH 连接（用完由调用方 async with 管理）。"""
+    import asyncssh
+    conn = await r.hgetall(f"hs:conn:{node_id}")
+    blob = await r.get(f"{CRED_PREFIX}{node_id}")
+    if not conn.get("host") or not blob:
+        raise HTTPException(400, f"节点 {node_id} 无连接档案/凭证，无法 SSH")
+    secret = decrypt(blob)
+    kw: dict = {"host": conn["host"], "port": int(conn.get("port", 22)),
+                "username": conn.get("username", "root"), "known_hosts": None,
+                "connect_timeout": 10}
+    if "PRIVATE KEY" in secret:
+        kw["client_keys"] = [asyncssh.import_private_key(secret)]
+    else:
+        kw["password"] = secret
+    return asyncssh.connect(**kw)
+
+
+@router.post("/{node_id}/docker/restart",
+             dependencies=[Depends(require_role("operator")), Depends(require_active_base)])
+async def restart_docker(node_id: str, r=Depends(deps.get)) -> dict:
+    """重启节点 Docker 守护进程（hengshu 容器均带 --restart unless-stopped，会自动回场）。"""
+    await _evt(r, "INFO", f"node ▸ {node_id} 重启 Docker 服务（运行中容器将短暂中断，自动回场）…")
+    try:
+        async with await _ssh_connect(r, node_id) as c:
+            # systemctl 优先，service 兜底；setsid 挂后台——连接可能随 docker 停止而断
+            out = await c.run(
+                "sudo -n sh -c 'setsid systemctl restart docker >/dev/null 2>&1 || "
+                "setsid service docker restart >/dev/null 2>&1' ; echo issued", timeout=15)
+            if "issued" not in (out.stdout or ""):
+                raise RuntimeError((out.stderr or "restart 命令未受理").strip()[:200])
+    except HTTPException:
+        raise
+    except Exception as e:  # SSH 断开也可能是 docker 已重启成功的表现
+        await _evt(r, "WARN", f"node ▸ {node_id} Docker 重启指令下发后连接中断（通常即重启生效）: {type(e).__name__}")
+        return {"ok": True, "node": node_id, "note": "指令已下发，连接中断（docker 重启中断连属正常），稍后节点自动回场"}
+    await _evt(r, "OK", f"node ▸ {node_id} Docker 重启指令已下发，Agent 数十秒内自动回场")
+    return {"ok": True, "node": node_id}
+
+
+async def _cleanup_node_host(r, node_id: str) -> dict:
+    """删除节点时真机清理：kill 所有 hengshu 相关容器 + 清数据卷 + 清镜像暂存。返回清理报告。"""
+    report: dict = {"cleaned": [], "errors": []}
+    try:
+        async with await _ssh_connect(r, node_id) as c:
+            out = await c.run(
+                "names=$(docker ps -a --format '{{.Names}}' | grep -E '^(hs-|hengshu-)' || true); "
+                "echo \"found:$names\"; "
+                "if [ -n \"$names\" ]; then echo \"$names\" | xargs -r docker rm -f 2>&1; fi; "
+                "docker volume rm hengshu-agent-data >/dev/null 2>&1 || true; "
+                "rm -rf /tmp/hengshu-img/* >/dev/null 2>&1 || true; "
+                "echo done", timeout=60)
+            txt = (out.stdout or "") + (out.stderr or "")
+            found = ""
+            for line in txt.splitlines():
+                if line.startswith("found:"):
+                    found = line[6:].strip()
+            report["cleaned"] = list(found.split())
+            if "done" not in txt:
+                report["errors"].append(txt.strip()[:200])
+    except Exception as e:
+        report["errors"].append(f"{type(e).__name__}: {e}")
+    return report
+
+
 @router.delete("/{node_id}", dependencies=[Depends(require_role("operator")), Depends(require_active_base)])
 async def remove_node(node_id: str, r=Depends(deps.get)) -> dict:
-    """删除节点：在线 → 写墓碑（Agent 下一拍心跳见到即自杀并删容器）；离线 → 直接清登记。"""
+    """删除节点：先 SSH 真机清理 hengshu 容器/数据卷/暂存（还原真机状态），再清平台登记+写墓碑。"""
     h = await r.hgetall(f"{NODE_PREFIX}{node_id}")
     online = bool(h) and int(h.get("last_seen", "0")) > time.time() - 15
+    # 真机清理（在线/有凭证时；失败不阻塞删除，报告带出）
+    report = await _cleanup_node_host(r, node_id)
+    if report["cleaned"]:
+        await _evt(r, "OK", f"node ▸ {node_id} 真机清理完成，已移除容器: {', '.join(report['cleaned'])}")
+    for err in report["errors"]:
+        await _evt(r, "WARN", f"node ▸ {node_id} 真机清理异常（需人工检查）: {err}")
     await r.delete(f"{NODE_PREFIX}{node_id}", f"{CRED_PREFIX}{node_id}",
                    f"hs:conn:{node_id}")
     # 清理该节点在模型集合里的实例登记（实例 hash 本身随 TTL 过期）
@@ -223,15 +305,12 @@ async def remove_node(node_id: str, r=Depends(deps.get)) -> dict:
         for iid in await r.smembers(mk):
             if iid.startswith(f"{node_id}:"):
                 await r.srem(mk, iid)
-    if online:
-        # 墓碑：Agent（新版）下一拍读到即自杀；列表层同时过滤墓碑节点，
-        # 旧版 Agent 即使瞎写也不会在控制台复活。墓碑持久，重新添加/安装时清除。
-        await r.set(f"hs:node_del:{node_id}", "1")
-        return {"removed": node_id, "agent_notified": True,
-                "msg": "节点在线：已下发自杀墓碑并隐藏，Agent（新版）数秒内自停"}
-    # 离线也写墓碑（防失联中的旧 Agent 突然恢复心跳复活）
+    # 墓碑持久（防失联旧 Agent 复活）；重新添加/安装时清除
     await r.set(f"hs:node_del:{node_id}", "1")
-    return {"removed": node_id, "agent_notified": False}
+    return {"removed": node_id, "agent_notified": online,
+            "cleanup": report,
+            "msg": "真机 hengshu 容器已清理" if report["cleaned"] and not report["errors"]
+                   else "平台登记已删；真机清理有异常，见事件流"}
 
 
 class NcclTestIn(BaseModel):
