@@ -289,6 +289,22 @@ async def _chat_image_bridge(req: ChatReq, model: str, img_pool: list, ctx: dict
         raise HTTPException(502, f"image bridge upstream {inst.inst_id}: HTTP {resp.status_code} {str(body)[:200]}")
     content = f"![{prompt[:60]}](data:image/png;base64,{data[0]['b64_json']})"
     await redis().incr(STAT_REQ_KEY)
+    msg_id = f"chatcmpl-img-{uuid.uuid4().hex[:12]}"
+    created = int(time.time())
+    if req.stream:
+        # 流式客户端（多数 OpenAI 前端默认 stream=true）：SSE 单 chunk 全量内容 + stop + DONE
+        chunk1 = {"id": msg_id, "object": "chat.completion.chunk", "created": created,
+                  "model": model,
+                  "choices": [{"index": 0, "delta": {"role": "assistant", "content": content},
+                               "finish_reason": None}]}
+        chunk2 = {"id": msg_id, "object": "chat.completion.chunk", "created": created,
+                  "model": model,
+                  "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                  "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}}
+        sse = (f"data: {json.dumps(chunk1, ensure_ascii=False)}\n\n"
+               f"data: {json.dumps(chunk2, ensure_ascii=False)}\n\ndata: [DONE]\n\n")
+        return Response(sse, media_type="text/event-stream",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
     return JSONResponse({
         "id": f"chatcmpl-img-{uuid.uuid4().hex[:12]}",
         "object": "chat.completion",
