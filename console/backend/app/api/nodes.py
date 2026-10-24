@@ -45,6 +45,11 @@ async def list_nodes(r=Depends(deps.get)) -> dict:
         seen.add(iid)
         insts = await r.keys(f"{INST_PREFIX}{iid}:*")
         conn = await r.hgetall(f"hs:conn:{iid}")  # SSH 连接信息（改连接对话框预填）
+        # 在线判定：last_seen 新鲜 且 有 agent_addr（老版本 agent 残缺心跳
+        # ——无 agent_addr/nics——不算在线：它在写心跳但平台无法对它下发任何操作，
+        # 显示在线是假象；残缺心跳节点单列 stale 状态提示清理老容器）
+        alive = int(h.get("last_seen", "0")) > time.time() - 15
+        complete = bool(h.get("agent_addr"))
         nodes.append({
             "node_id": iid,
             "hostname": h.get("hostname", ""),
@@ -54,7 +59,7 @@ async def list_nodes(r=Depends(deps.get)) -> dict:
             "models_mount": conn.get("models_mount", ""),
             "arch": h.get("arch", ""),
             "nics": json.loads(h.get("nics", "[]") or "[]"),
-            "status": "online" if int(h.get("last_seen", "0")) > time.time() - 15 else "offline",
+            "status": ("online" if complete else "stale") if alive else "offline",
             "last_seen": int(h.get("last_seen", "0")),
             "instances": len(insts),
         })

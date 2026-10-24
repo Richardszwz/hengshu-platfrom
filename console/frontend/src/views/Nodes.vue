@@ -59,8 +59,8 @@
               <td>{{ n.hostname }} <span class="dim" v-if="n.hostname">:{{ n.ssh_port || 22 }}</span></td>
               <td class="mono">{{ n.arch || '—' }}</td>
               <td>
-                <span class="st" :class="n.status === 'online' ? 'ok' : (n.status === 'pending' ? 'wait' : 'bad')">
-                  <i></i>{{ n.status === 'online' ? '在线' : (n.status === 'pending' ? '待上线' : '离线') }}
+                <span class="st" :class="n.status === 'online' ? 'ok' : (n.status === 'pending' ? 'wait' : (n.status === 'stale' ? 'wait' : 'bad'))">
+                  <i></i>{{ n.status === 'online' ? '在线' : (n.status === 'pending' ? '待上线' : (n.status === 'stale' ? '异常·老agent' : '离线')) }}
                 </span>
               </td>
               <td class="mono link" @click="toggleExpand(n.node_id)">{{ n.instances ?? 0 }}</td>
@@ -239,8 +239,8 @@
               <td><input type="checkbox" :disabled="n.status !== 'online'"
                      :checked="launchNodes.has(n.node_id)" @change="toggleLaunchNode(n)" /></td>
               <td><b>{{ n.node_id }}</b></td>
-              <td><span class="st" :class="n.status === 'online' ? 'ok' : (n.status === 'pending' ? 'wait' : 'bad')">
-                <i></i>{{ n.status === 'online' ? '在线' : (n.status === 'pending' ? '待上线' : '离线') }}</span></td>
+              <td><span class="st" :class="n.status === 'online' ? 'ok' : (n.status === 'pending' ? 'wait' : (n.status === 'stale' ? 'wait' : 'bad'))">
+                <i></i>{{ n.status === 'online' ? '在线' : (n.status === 'pending' ? '待上线' : (n.status === 'stale' ? '异常·老agent' : '离线')) }}</span></td>
               <td>
                 <select v-if="n.status === 'online' && (n.nics||[]).length"
                         v-model="apiIps[n.node_id]" class="inp row-inp">
