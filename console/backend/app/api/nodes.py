@@ -58,6 +58,8 @@ async def list_nodes(r=Depends(deps.get)) -> dict:
             "ssh_user": conn.get("username", ""),
             "models_mount": conn.get("models_mount", ""),
             "arch": h.get("arch", ""),
+            "gpu_count": int(h.get("gpu_count") or 0),
+            "gpu_name": h.get("gpu_name", ""),
             "nics": json.loads(h.get("nics", "[]") or "[]"),
             "status": ("online" if complete else "stale") if alive else "offline",
             "last_seen": int(h.get("last_seen", "0")),

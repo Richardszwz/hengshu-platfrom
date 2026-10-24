@@ -45,7 +45,7 @@
         <table>
           <thead>
             <tr>
-              <th>节点 ID</th><th>主机</th><th>架构</th><th>状态</th>
+              <th>节点 ID</th><th>主机</th><th>架构</th><th>GPU</th><th>状态</th>
               <th>实例</th><th>最近心跳</th><th>操作</th>
             </tr>
           </thead>
@@ -58,6 +58,7 @@
               </td>
               <td>{{ n.hostname }} <span class="dim" v-if="n.hostname">:{{ n.ssh_port || 22 }}</span></td>
               <td class="mono">{{ n.arch || '—' }}</td>
+              <td class="mono" :title="n.gpu_name">{{ n.gpu_count ? `${shortGpu(n.gpu_name)} ×${n.gpu_count}` : '—' }}</td>
               <td>
                 <span class="st" :class="n.status === 'online' ? 'ok' : (n.status === 'pending' ? 'wait' : (n.status === 'stale' ? 'wait' : 'bad'))">
                   <i></i>{{ n.status === 'online' ? '在线' : (n.status === 'pending' ? '待上线' : (n.status === 'stale' ? '异常·老agent' : '离线')) }}
@@ -552,6 +553,10 @@ const launchResults = ref<string[]>([])              // 启动下发结果行
 const apiIps = ref<Record<string, string>>({})    // 节点 → 选中的服务入口 IP
 const linkNics = ref<Record<string, string>>({})  // 节点 → 互联用网卡名
 const nodeSpecs = ref<any[]>([])  // 当前节点历史启动模板
+
+// GPU 型号缩短显示（表格列宽有限，全称放 title 悬浮）
+const shortGpu = (name: string) => (name || '')
+  .replace(/^NVIDIA\s+(GeForce\s+)?/i, '').replace(/\s+V2$/, '').trim() || 'GPU'
 
 /* ---------- 网络设置对话框（节点行触发） ---------- */
 const netOpen = ref(false)
