@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     redis_url: str = "redis://localhost:6379/0"
+    data_dir: str = ".data"                   # 本地暂存（桥接图片等）
     router_host: str = "0.0.0.0"
     router_port: int = 9000
     router_api_key: str = "demo-api-key"

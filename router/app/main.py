@@ -12,13 +12,14 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import time
 import uuid
 
 import httpx
 import redis.asyncio as aioredis
 import uvicorn
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
@@ -263,12 +264,13 @@ async def hse_decide(messages: list[dict]) -> tuple[str | None, str | None]:
             return None, None
         dec = d.get("decision") or {}
         return dec.get("model"), dec.get("tier")
-    except Exception:
+    except Exception as e:
+        logging.getLogger("hengshu.router").warning("hse_decide 失败（降级默认池）: %s: %s", type(e).__name__, e)
         return None, None  # 引擎失联/超时 → 默认池（fail-open）
 
 
 async def _bridge_fetch(inst, model: str, prompt: str) -> str:
-    """调图像实例出图，返回 content（markdown 内联图）。失败抛 HTTPException。"""
+    """调图像实例出图，返回 b64_png。失败抛 HTTPException。"""
     try:
         async with httpx.AsyncClient(timeout=settings.upstream_timeout, trust_env=False) as c:
             resp = await c.post(f"{inst.url}/v1/images/generations",
@@ -279,10 +281,37 @@ async def _bridge_fetch(inst, model: str, prompt: str) -> str:
     data = body.get("data") or []
     if resp.status_code != 200 or not data or not data[0].get("b64_json"):
         raise HTTPException(502, f"image bridge upstream {inst.inst_id}: HTTP {resp.status_code} {str(body)[:200]}")
-    return f"![{prompt[:60]}](data:image/png;base64,{data[0]['b64_json']})"
+    return data[0]["b64_json"]
 
 
-async def _bridge_stream(inst, model: str, prompt: str):
+async def _bridge_content(model: str, prompt: str, b64: str, base_url: str) -> str:
+    """图片暂存本地文件（1h 惰性过期），content 用 URL markdown——data-URI 是 MB 级文本，
+    聊天前端（Hermes/workbuddy）不渲染且直接铺成乱码；redis 存 MB 级字符串会撞
+    redis-py RESP 解析 chunk limit，故走文件。URL 形式所有 markdown 前端通吃。"""
+    import base64 as _b64
+    import pathlib as _pl
+
+    img_id = uuid.uuid4().hex
+    d = _pl.Path(os.getenv("IMG_CACHE_DIR") or os.path.join(settings.data_dir, "imgcache"))
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{img_id}.png").write_bytes(_b64.b64decode(b64))
+    return f"![{prompt[:60]}]({base_url}/v1/images/files/{img_id}.png)"
+
+
+@app.get("/v1/images/files/{img_id}.png")
+async def image_file(img_id: str) -> Response:
+    """桥接图片暂存下载（随机 id 即能力凭证——<img> 标签带不了 Authorization 头）。"""
+    import pathlib as _pl
+
+    if not img_id.isalnum() or len(img_id) > 40:
+        raise HTTPException(404, "not found")
+    p = _pl.Path(os.getenv("IMG_CACHE_DIR") or os.path.join(settings.data_dir, "imgcache")) / f"{img_id}.png"
+    if not p.exists() or time.time() - p.stat().st_mtime > 3600:
+        raise HTTPException(404, "图片已过期（暂存 1 小时）")
+    return Response(content=p.read_bytes(), media_type="image/png")
+
+
+async def _bridge_stream(inst, model: str, prompt: str, base_url: str):
     """流式桥接：出图等待期每 15s 发 SSE 心跳注释行（防流式前端空闲超时
     「已取消」——workbuddy 实测 1m28s 零输出被取消），完成后单 chunk 全量图 + stop + DONE。"""
     import asyncio as _aio
@@ -293,14 +322,15 @@ async def _bridge_stream(inst, model: str, prompt: str):
     while not task.done():
         try:
             await _aio.wait_for(_aio.shield(task), timeout=15)
-        except TimeoutError:
+        except TimeoutError:  # asyncio.TimeoutError 即此别名（3.11+），wait_for 用
             yield ": keepalive\n\n"   # SSE 注释行：客户端忽略内容但连接保持活跃
     try:
-        content = task.result()
+        b64 = task.result()
     except HTTPException as e:
         err = {"error": {"message": e.detail, "code": e.status_code}}
         yield f"data: {json.dumps(err, ensure_ascii=False)}\n\ndata: [DONE]\n\n"
         return
+    content = await _bridge_content(model, prompt, b64, base_url)
     await redis().incr(STAT_REQ_KEY)
     chunk1 = {"id": msg_id, "object": "chat.completion.chunk", "created": created,
               "model": model,
@@ -314,10 +344,11 @@ async def _bridge_stream(inst, model: str, prompt: str):
     yield f"data: {json.dumps(chunk2, ensure_ascii=False)}\n\ndata: [DONE]\n\n"
 
 
-async def _chat_image_bridge(req: ChatReq, model: str, img_pool: list, ctx: dict) -> Response:
+async def _chat_image_bridge(req: ChatReq, model: str, img_pool: list, ctx: dict,
+                             base_url: str) -> Response:
     """chat→image 桥接：对话请求被规则路由到图像模型 → 出图，以 chat completion 格式返回。
 
-    prompt 取最后一条 user 消息文本；图片以 markdown data-URI 内联（前端直接渲染）。
+    prompt 取最后一条 user 消息文本；图片以暂存 URL 内联（前端 markdown 直接渲染）。
     stream=true 时返回 SSE（含出图等待期心跳）。
     """
     last_user = next((m for m in reversed(req.messages) if m.get("role") == "user"), None)
@@ -326,10 +357,11 @@ async def _chat_image_bridge(req: ChatReq, model: str, img_pool: list, ctx: dict
         raise HTTPException(400, "图像生成桥接需要非空 user 提示词")
     inst = pick(img_pool, None)
     if req.stream:
-        return StreamingResponse(_bridge_stream(inst, model, prompt),
+        return StreamingResponse(_bridge_stream(inst, model, prompt, base_url),
                                  media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
-    content = await _bridge_fetch(inst, model, prompt)
+    b64 = await _bridge_fetch(inst, model, prompt)
+    content = await _bridge_content(model, prompt, b64, base_url)
     await redis().incr(STAT_REQ_KEY)
     return JSONResponse({
         "id": f"chatcmpl-img-{uuid.uuid4().hex[:12]}",
@@ -344,7 +376,8 @@ async def _chat_image_bridge(req: ChatReq, model: str, img_pool: list, ctx: dict
 
 
 @app.post("/v1/chat/completions")
-async def chat(req: ChatReq, x_session_id: str | None = Header(default=None),
+async def chat(req: ChatReq, request: Request,
+               x_session_id: str | None = Header(default=None),
                x_type: str | None = Header(default=None),
                ctx: dict = Depends(auth)) -> Response:
     ctx = await auth_tenant(ctx)
@@ -394,7 +427,8 @@ async def chat(req: ChatReq, x_session_id: str | None = Header(default=None),
                 if allowed0:
                     img_pool = [c for c in img_pool if c.model in allowed0]
                 if img_pool:
-                    return await _chat_image_bridge(req, model, img_pool, ctx)
+                    return await _chat_image_bridge(req, model, img_pool, ctx,
+                                                    str(request.base_url).rstrip("/"))
         # HSE 指定的模型无在线实例 → 回退全池（引擎决策是建议不是命令）
         if not candidates and decided:
             candidates = await registry.all_instances()
