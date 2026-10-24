@@ -80,7 +80,7 @@ class RouteReq(BaseModel):
 @app.get("/healthz")
 async def healthz() -> dict:
     st = await license_state()
-    return {"ok": True, "service": "hse", "version": "1.0.1", "edition": st.edition,
+    return {"ok": True, "service": "hse", "version": "1.1.0", "edition": st.edition,
             "license_ok": st.ok, "reason": st.reason}
 
 

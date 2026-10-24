@@ -93,8 +93,20 @@ def _sample_nvm(nvm) -> dict:
     else:
         vram_pct = round(vram_sum / mem_total_max * 100, 1) if mem_total_max else 0.0
     n = max(count, 1)
+    # GPU 名称（多机 TP 并行编排要按卡数/型号做同构校验）
+    gpu_name = ""
+    try:
+        from pynvml import nvmlDeviceGetName
+        if count:
+            gpu_name = nvmlDeviceGetName(nvmlDeviceGetHandleByIndex(0))
+            if isinstance(gpu_name, bytes):
+                gpu_name = gpu_name.decode()
+    except Exception:
+        pass
     return {
         "gpu_util": round(util_sum / n, 1),
+        "gpu_count": count,
+        "gpu_name": gpu_name,
         "vram": vram_pct,
         "temp": temp_max,
         "power": round(power_sum, 1),

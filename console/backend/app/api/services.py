@@ -247,7 +247,12 @@ async def service_logs(node_id: str, name: str, tail: int = 100,
 
 
 class MultiStartReq(BaseModel):
-    """多机 TP 并行启动：一个模型横跨多节点（Ray + vllm --tensor-parallel-size=N）。"""
+    """多机并行启动：一个模型横跨多节点（Ray 集群 + vllm TP/PP）。
+
+    并行策略（vllm 官方推荐，无 NVLink 的节点间互联走 PP 通信量最小）：
+    - pp（默认）：TP=每节点 GPU 数，PP=节点数 —— 层间切分，节点间只传激活值
+    - tp：TP=集群总卡数 —— 层内切分，要求节点间高速互联（RoCE/IB）
+    """
     name: str
     nodes: list[str] = Field(min_length=2)          # 首个 = master（推理入口所在）
     nics: dict[str, str] = {}                       # 节点 → 网卡名（NCCL/Ray 走该链路）
@@ -258,6 +263,8 @@ class MultiStartReq(BaseModel):
     tier: str = ""                                # 档位别名（HSE 路由）
     kind: str = "chat"                            # 服务类型（同 StartServiceReq）
     health_path: str = ""
+    strategy: str = "pp"                          # pp（推荐）| tp
+    precheck: bool = False                        # 启动前跑 NCCL all_reduce 互通自检
 
 
 @router.post("/multi-start", dependencies=[Depends(require_role("operator")), Depends(require_active_base)])
@@ -273,8 +280,9 @@ async def multi_start(req: MultiStartReq, r=Depends(deps.get)) -> dict:
 
     async def _bg() -> None:
         world = len(req.nodes)
-        # ① 节点信息（agent 地址 + 网卡 IP）
+        # ① 节点信息（agent 地址 + 网卡 IP + GPU 数同构校验）
         infos: dict[str, dict] = {}
+        gpu_counts: dict[str, int] = {}
         for nid in req.nodes:
             addr = await _agent_addr(nid, r)
             h = await r.hgetall(f"{NODE_PREFIX}{nid}")
@@ -287,7 +295,41 @@ async def multi_start(req: MultiStartReq, r=Depends(deps.get)) -> dict:
             if not ip:
                 await _emit("ERR", f"multi ▸ {nid} 网卡 {nic} 无可用 IP，中止")
                 return
-            infos[nid] = {"addr": addr, "ip": ip, "nic": nic}
+            gpn = int(h.get("gpu_count") or 1)
+            gpu_counts[nid] = gpn
+            infos[nid] = {"addr": addr, "ip": ip, "nic": nic, "gpus": gpn,
+                          "gpu_name": h.get("gpu_name", "")}
+        if len(set(gpu_counts.values())) > 1:
+            await _emit("ERR", f"multi ▸ 节点 GPU 数不一致 {gpu_counts}——"
+                               f"vllm 多机并行要求各节点卡数相同，请调整节点选择")
+            return
+        gpn = next(iter(gpu_counts.values()))
+        total = gpn * world
+        if req.strategy == "tp":
+            par = f"--tensor-parallel-size {total}"
+            desc = f"TP×{total}（{world} 节点×{gpn} 卡，层内切分，要求高速互联）"
+        else:
+            par = (f"--tensor-parallel-size {gpn} --pipeline-parallel-size {world}")
+            desc = f"PP×{world}×TP×{gpn}（层间切分，节点间仅传激活值——无 NVLink 场景官方推荐）"
+        await _emit("INFO", f"multi ▸ 并行策略 {desc}")
+
+        # ①.5 NCCL 互通自检（可选）：复用 nccl-test 链路，不过则中止
+        if req.precheck:
+            from .nodes import NcclTestIn, nccl_test
+            await _emit("INFO", "multi ▸ NCCL all_reduce 互通自检中（约 1 分钟）…")
+            try:
+                chk = await nccl_test(NcclTestIn(nodes=req.nodes, nics=req.nics,
+                                                 image=req.image), r=r)
+            except Exception as e:
+                await _emit("ERR", f"multi ▸ NCCL 自检执行失败，中止启动: {type(e).__name__}: {e}")
+                return
+            if not chk.get("ok"):
+                tails = "; ".join(f"{x.get('node')}: {(x.get('tail') or [''])[-1][:80]}"
+                                  for x in chk.get("results", []))
+                await _emit("ERR", f"multi ▸ NCCL 自检未通过，中止启动——{tails[:300]}")
+                return
+            await _emit("OK", f"multi ▸ NCCL 自检通过（{chk.get('master_ip')}）")
+
         master = req.nodes[0]
         m_ip = infos[master]["ip"]
 
@@ -339,9 +381,9 @@ async def multi_start(req: MultiStartReq, r=Depends(deps.get)) -> dict:
             return
         await _emit("OK", f"multi ▸ ray 集群就绪 {world} 节点")
 
-        # ⑤ master 起 vllm TP=world（正常服务管控链路，实例注册不变）
+        # ⑤ master 起 vllm（策略化并行参数；正常服务管控链路，实例注册不变）
         tp_cmd = (f"vllm serve /models/{req.model_dir} --port {req.port} "
-                  f"--served-model-name {req.name} --tensor-parallel-size {world} "
+                  f"--served-model-name {req.name} {par} "
                   f"--distributed-executor-backend ray")
         svc_env = dict(req.env)
         svc_env.update({"VLLM_HOST_IP": m_ip,
@@ -366,8 +408,8 @@ async def multi_start(req: MultiStartReq, r=Depends(deps.get)) -> dict:
         scalar["volumes_json"] = _json.dumps(spec["volumes"])
         await r.hset(f"{SPEC_PREFIX}{master}:{req.name}", mapping=scalar)
         await r.set(f"hs:svcgroup:{req.name}",
-                    _json.dumps({"nodes": req.nodes, "master": master}))
-        await _emit("OK", f"multi ▸ {req.name} TP×{world} 已受理（{master}:{req.port}，加载数分钟）")
+                    _json.dumps({"nodes": req.nodes, "master": master, "strategy": req.strategy}))
+        await _emit("OK", f"multi ▸ {req.name} 已受理（{master}:{req.port}，{desc}，加载数分钟）")
 
     _fire(_bg())
     return {"accepted": req.name, "tp": len(req.nodes),

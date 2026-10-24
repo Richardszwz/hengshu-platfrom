@@ -268,6 +268,28 @@
           </tbody>
         </table>
 
+        <!-- 多机并行策略（≥2 节点时显示） -->
+        <div v-if="launchNodes.size > 1" class="pp-panel">
+          <p class="sec-label">多机并行策略（Ray 集群）</p>
+          <label class="pp-opt">
+            <input type="radio" value="pp" v-model="launch.strategy" />
+            <span><b>流水线并行 PP×{{ launchNodes.size }}</b>（推荐）——层间切分，节点间仅传激活值；
+              无 NVLink 的以太网/RoCE 互联场景通信量最小（vllm 官方推荐）</span>
+          </label>
+          <label class="pp-opt">
+            <input type="radio" value="tp" v-model="launch.strategy" />
+            <span><b>张量并行 TP×{{ launchNodes.size }}</b>——层内切分，节点间高频交换中间张量；
+              仅在高速互联（RoCE/IB 实测达标）时选</span>
+          </label>
+          <label class="pp-opt">
+            <input type="checkbox" v-model="launch.precheck" />
+            <span>启动前 NCCL 互通自检（先跑 all_reduce 测试，不过则不进入启动流程）</span>
+          </label>
+          <p class="dim" style="font-size:11px;margin:4px 0 0">
+            要求：各节点 GPU 卡数一致（心跳自动校验）；模型经分发链路确保各节点同名目录就绪；
+            master（API 入口）= 勾选列表首个节点。</p>
+        </div>
+
         <!-- 参数 -->
         <p class="sec-label" style="margin-top:14px">参数</p>
         <label>服务/模型名 <input v-model.trim="launch.name" class="inp" placeholder="如 Qwen3-8B" /></label>
@@ -523,7 +545,7 @@ async function reinstall(n: any) {
 const launchOpen = ref(false)
 const launchBusy = ref(false)
 const launchError = ref('')
-const launch = reactive({ node: '', name: '', image: 'docker.1ms.run/vllm/vllm-openai:latest', start_cmd: '', port: 8100, tier: '', kind: 'chat', health_path: '', envText: '', volText: '' })
+const launch = reactive({ node: '', name: '', image: 'docker.1ms.run/vllm/vllm-openai:latest', start_cmd: '', port: 8100, tier: '', kind: 'chat', health_path: '', envText: '', volText: '', strategy: 'pp', precheck: false })
 const launchNodes = ref<Set<string>>(new Set())      // 勾选的多机部署节点
 const launchNics = ref<Record<string, string>>({})   // 节点 → NCCL/TP 链路网卡名
 const launchResults = ref<string[]>([])              // 启动下发结果行
@@ -811,8 +833,9 @@ async function submitLaunch() {
         nics: linkNics.value,
         model_dir: md[1], image: launch.image, port: launch.port, env,
         tier: launch.kind === 'chat' ? launch.tier : '',
-        kind: launch.kind, health_path: launch.health_path })
-      launchResults.value = [`✓ 已受理 TP×${d.tp}（${d.note}）`]
+        kind: launch.kind, health_path: launch.health_path,
+        strategy: launch.strategy, precheck: launch.precheck })
+      launchResults.value = [`✓ 已受理（${d.note}）`]
       launchOpen.value = false
     } catch (e: any) {
       launchResults.value = [`✗ ${e?.response?.data?.detail || e?.message || '下发失败'}`]
@@ -891,6 +914,10 @@ onUnmounted(() => clearInterval(timer))
 .tabs .tab.on { color: var(--cyan); border-color: var(--cyan-dim); background: rgba(0,229,255,.08); }
 .tab-pane { display: flex; flex-direction: column; gap: 10px; }
 .sec-label { font-size: 11px; letter-spacing: 3px; color: var(--cyan); margin: 0 0 8px; border-left: 2px solid var(--cyan); padding-left: 8px; }
+.pp-panel { margin: 10px 0 2px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; background: rgba(0,30,50,.35); }
+.pp-opt { display: flex; gap: 8px; align-items: flex-start; margin: 6px 0; font-size: 12px; line-height: 1.5; cursor: pointer; }
+.pp-opt input { margin-top: 3px; }
+.pp-opt span b { color: var(--cyan); }
 .launch-dialog.wide { width: 860px; max-width: 92vw; }
 /* 节点行表（tab 内） */
 .deploy-tbl.compact { width: 100%; border-collapse: collapse; font-size: 12px; }

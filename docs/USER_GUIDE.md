@@ -305,12 +305,27 @@ curl http://<控制台IP>:9000/v1/chat/completions \
 `python /opt/hs-extra/server.py --model /models/<模型目录> --port {port}`——依赖不写在启动命令里
 （气隙环境无法 pip，且每次启动重复装依赖易失败）。详见 `extras/image_server/README.md`。
 
-### 6.4 多机 TP 并行
+### 6.4 多机并行（Ray 集群，v1.1.0 完善）
 
-勾选 ≥2 台节点时出现网卡选择（每节点选互联网卡）：
-- 首节点为 master（API 入口所在），平台自动起 Ray head/worker 集群
-- 集齐后 master 起 `vllm --tensor-parallel-size=N`
-- 事件流全程可见：模型分发 → NCCL 链路 → Ray 组网 → vllm 加载
+![多机并行策略](assets/12-launch-multinode.png)
+
+单机装不下的大模型可横跨多节点部署（一个模型 = 一个推理实例，对外仍是统一 API）。
+
+**操作**：启动对话框勾选 ≥2 台在线节点 → 出现「多机并行策略」区与每节点网卡选择：
+
+- **流水线并行 PP×N（推荐）**：层间切分（TP=每节点卡数 × PP=节点数），节点间只传激活值——无 NVLink 的以太网/RoCE 互联场景通信量最小，vllm 官方对 L40S 类无 NVLink 设备的推荐姿势
+- **张量并行 TP×N**：层内切分（TP=集群总卡数），节点间高频交换中间张量——仅在高速互联（RoCE/IB 实测达标）时选
+- **NCCL 互通自检**（勾选）：启动前先跑 all_reduce 测试，不过则不进入启动流程（避免半个钟头模型加载完才发现链路不通）
+- **master = 勾选列表首个节点**（API 入口所在）；事件流明示所选策略与 world size
+
+**硬约束**（平台自动校验，不满足直接中止并报原因）：
+- 各节点 GPU 卡数一致（agent 心跳上报 `gpu_count`/`gpu_name`）
+- 每节点选好互联网卡且 IP 可达
+- 模型经分发链路确保各节点同名目录（自动）
+
+**编排流程**（受理制，事件流全程可见）：模型分发 → Ray head（master）→ worker 并行加入 → 集齐 world 节点 → master 起 `vllm serve --tensor-parallel-size=<每机卡数> --pipeline-parallel-size=<节点数> --distributed-executor-backend ray` → 注册实例进路由池。删除服务时自动连带清理各节点 Ray 容器。
+
+> 多机并行只改变推理实例的内部拓扑——路由/规则/会话保持/授权对多机实例与单机实例一视同仁。
 
 ### 6.5 服务巡检与崩溃循环
 
@@ -677,3 +692,4 @@ License 的 `max_nodes` 限制纳管节点数（0=不限）；超限时纳管/�
 |---|---|---|---|
 | v1.0 | v1.0.0 | 2026-10-21 | 首版：平台 P0-P2 全量 + HSE STD/PRO/ENT + 授权两层制 + 自定义框架服务（image/custom） |
 | v1.0.1 | v1.0.1 | 2026-10-23 | 三档路由策略完整章节（9.2 总览表）；图像路由收紧为 PRO/ENT 能力位（image_route）；chat→image 桥接（8.7，含 stream/SSE 心跳保活）；模型选择 auto/* 同义语义；节点运维（重启 Docker/删除真机清理）；驾驶舱 HSE 决策面板 |
+| v1.1.0 | v1.1.0 | 2026-10-23 | 多机并行完善（6.4）：PP/TP 策略选择（PP 默认——无 NVLink 官方推荐）+ 节点 GPU 数心跳上报与同构校验 + NCCL 互通自检可选前置 + 启动对话框策略区清晰化 |

@@ -425,6 +425,8 @@ async def heartbeat_loop() -> None:
                 "agent_addr": f"http://{_advertise_host()}:{settings.agent_port}",
                 "m_temp": str(sysm.get("temp", 0.0)),
                 "m_power": str(sysm.get("power", 0.0)),
+                "gpu_count": str(sysm.get("gpu_count", 0)),
+                "gpu_name": str(sysm.get("gpu_name", "")),
                 "nics": json.dumps(_NICS_CACHE, ensure_ascii=False),
                 "last_seen": str(int(time.time())),
             }
